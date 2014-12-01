@@ -1,107 +1,246 @@
 <!DOCTYPE html>
 <html>
 <head>
+<title>---</title>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport" />
 <meta charset=utf-8></head>
 <body></body>
 <script language=javascript>
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-var mercury = require("../../index.js")
-var TimeTravel = require("../../time-travel.js")
-var document = require("global/document")
-var window = require("global/window")
-var rafListen = require("./lib/raf-listen.js")
-var localStorage = window.localStorage
+'use strict';
 
-var Input = require("./input.js")
-var State = require("./state.js")
-var Render = require("./render.js")
-var Update = require("./update.js")
+var document = require('global/document');
+var nextTick = require('next-tick');
 
-module.exports = createApp
-
-var state = createApp()
-window.undo = TimeTravel(state)
-mercury.app(document.body, state, Render)
-
-function createApp() {
-    // load from localStorage
-    var storedState = localStorage.getItem("todos-mercury")
-    var initialState = storedState ? JSON.parse(storedState) : null
-
-    var events = Input()
-    var state = window.state = State.todoApp(events, initialState)
-
-    wireUpEvents(state, events)
-
-    rafListen(state, function (value) {
-        localStorage.setItem("todos-mercury", JSON.stringify(value))
-    })
-
-    return state
-}
-
-function wireUpEvents(state, events) {
-    events.toggleAll(Update.toggleAll.bind(null, state))
-    events.add(Update.add.bind(null, state))
-    events.setTodoField(Update.setTodoField.bind(null, state))
-    events.toggle(Update.toggle.bind(null, state))
-    events.destroy(Update.destroy.bind(null, state))
-    events.startEdit(Update.startEdit.bind(null, state))
-    events.finishEdit(Update.finishEdit.bind(null, state))
-    events.cancelEdit(Update.cancelEdit.bind(null, state))
-    events.clearCompleted(Update.clearCompleted.bind(null, state))
-    events.setRoute(Update.setRoute.bind(null, state))
-}
-
-},{"../../index.js":8,"../../time-travel.js":92,"./input.js":2,"./lib/raf-listen.js":4,"./render.js":5,"./state.js":6,"./update.js":7,"global/document":33,"global/window":34}],2:[function(require,module,exports){
-var window = require("global/window")
-var HashRouter = require("hash-router")
-var Event = require("geval")
-
-var mercury = require("../../index.js")
-
-module.exports = createInput
-
-function createInput() {
-    var events = mercury.input([
-        "toggleAll", "add", "setTodoField", "toggle", "destroy",
-        "startEdit", "finishEdit", "cancelEdit", "clearCompleted"
-    ])
-
-    events.setRoute = EventRouter()
-
-    return events
-}
-
-function EventRouter() {
-    var router = HashRouter()
-    window.addEventListener("hashchange", router)
-
-    return Event(function (emit) {
-        router.on("hash", emit)
-    })
-}
-
-},{"../../index.js":8,"geval":32,"global/window":34,"hash-router":35}],3:[function(require,module,exports){
-var document = require("global/document")
-
-module.exports = MutableFocusHook
+module.exports = MutableFocusHook;
 
 function MutableFocusHook() {
     if (!(this instanceof MutableFocusHook)) {
-        return new MutableFocusHook()
+        return new MutableFocusHook();
     }
 }
 
-MutableFocusHook.prototype.hook = function (node, property) {
-    if (document.activeElement !== node) {
-        node.focus();
+MutableFocusHook.prototype.hook = function hook(node, property) {
+    nextTick(function onTick() {
+        if (document.activeElement !== node) {
+            node.focus();
+        }
+    });
+};
+
+},{"global/document":33,"next-tick":60}],2:[function(require,module,exports){
+'use strict';
+
+var h = require('../../../index.js').h;
+var clickEvent = require('value-event/click.js');
+
+var routeAtom = require('./index.js').atom;
+
+module.exports = anchor;
+
+function anchor(props, text) {
+    var href = props.href;
+    props.href = '#';
+
+    props['ev-click'] = clickEvent(pushState, null, {
+        ctrl: false,
+        meta: false,
+        rightClick: false,
+        preventDefault: true
+    });
+
+    return h('a', props, text);
+
+    function pushState() {
+        routeAtom.set(href);
     }
 }
 
-},{"global/document":33}],4:[function(require,module,exports){
-var raf = require('raf/polyfill');
+},{"../../../index.js":10,"./index.js":3,"value-event/click.js":81}],3:[function(require,module,exports){
+'use strict';
+
+// circular dependency.
+module.exports = getRouter;
+
+var mercury = require('../../../index.js');
+var source = require('geval/source');
+var window = require('global/window');
+var document = require('global/document');
+
+var cachedRouter = Router();
+
+getRouter.atom = cachedRouter;
+getRouter.anchor = require('./anchor.js');
+getRouter.render = require('./view.js');
+
+function getRouter() {
+    return cachedRouter;
+}
+
+function Router() {
+    var inPopState = false;
+    var popstates = popstate();
+    var atom = mercury.value(String(document.location.pathname));
+
+    popstates(onPopState);
+    atom(onRouteSet);
+
+    return atom;
+
+    function onPopState(uri) {
+        inPopState = true;
+        atom.set(uri);
+    }
+
+    function onRouteSet(uri) {
+        if (inPopState) {
+            inPopState = false;
+            return;
+        }
+
+        pushHistoryState(uri);
+    }
+}
+
+function pushHistoryState(uri) {
+    window.history.pushState(undefined, document.title, uri);
+}
+
+function popstate() {
+    return source(function broadcaster(broadcast) {
+        window.addEventListener('popstate', onPopState);
+
+        function onPopState() {
+            broadcast(String(document.location.pathname));
+        }
+    });
+}
+
+},{"../../../index.js":10,"./anchor.js":2,"./view.js":4,"geval/source":32,"global/document":33,"global/window":34}],4:[function(require,module,exports){
+'use strict';
+
+var routeMap = require('route-map');
+
+module.exports = render;
+
+function render(atom, defn, opts) {
+    if (opts && opts.base) {
+        defn = Object.keys(defn)
+            .reduce(function applyBase(acc, str) {
+                acc[opts.base + str] = defn[str];
+                return acc;
+            }, {});
+    }
+
+    var match = routeMap(defn);
+
+    var res = match(atom);
+    if (!res) {
+        throw new Error('router: no match found');
+    }
+
+    res.params.url = res.url;
+    return res.fn(res.params);
+}
+
+},{"route-map":77}],5:[function(require,module,exports){
+'use strict';
+
+var Event = require('geval/event');
+var extend = require('xtend');
+var createStore = require('weakmap-shim/create-store');
+
+module.exports = WeakmapEvent;
+
+function WeakmapEvent() {
+    var store = createStore();
+
+    listen.asArray = listenAsArray;
+    listen.asHash = listenAsHash;
+
+    return {
+        broadcast: broadcast,
+        listen: listen
+    };
+
+    function broadcast(obj, value) {
+        getEvent(obj).broadcast(value, obj);
+    }
+
+    function listen(obj, fn) {
+        getEvent(obj).listen(fn);
+    }
+
+    function getEvent(obj) {
+        var privates = store(obj);
+        privates.event = privates.event || Event();
+        return privates.event;
+    }
+
+    function listenAsArray(arr, fn) {
+        throw new Error('Not Implemented.');
+    }
+
+    function listenAsHash(hash, fn) {
+        var current = extend(hash);
+
+        Object.keys(hash()).forEach(function listenKey(k) {
+            listen(hash[k], fn);
+        });
+
+        hash(function onChange(newObj) {
+            Object.keys(hash()).forEach(function listenKey(k) {
+                if (current[k] !== hash[k]) {
+                    listen(hash[k], fn);
+                }
+            });
+
+            current = extend(hash);
+        });
+    }
+}
+
+},{"geval/event":29,"weakmap-shim/create-store":138,"xtend":140}],6:[function(require,module,exports){
+'use strict';
+
+var hg = require('../../index.js');
+var TimeTravel = require('../../time-travel.js');
+var document = require('global/document');
+var window = require('global/window');
+var rafListen = require('./lib/raf-listen.js');
+var localStorage = window.localStorage;
+
+var TodoApp = require('./todo-app.js');
+
+function App() {
+    // load from localStorage
+    var storedState = localStorage.getItem('todos-mercury@11');
+    var initialState = storedState ? JSON.parse(storedState) : null;
+
+    var todoApp = TodoApp(initialState);
+
+    rafListen(todoApp, function onChange(value) {
+        localStorage.setItem('todos-mercury@11',
+            JSON.stringify(value));
+    });
+
+    return todoApp;
+}
+
+App.render = TodoApp.render;
+
+var app = App();
+var history = TimeTravel(app);
+window.undo = history.undo;
+window.redo = history.redo;
+hg.app(document.body, app, App.render);
+
+module.exports = App;
+
+},{"../../index.js":10,"../../time-travel.js":141,"./lib/raf-listen.js":7,"./todo-app.js":8,"global/document":33,"global/window":34}],7:[function(require,module,exports){
+'use strict';
+
+var raf = require('raf');
 
 module.exports = rafListen;
 
@@ -133,653 +272,408 @@ function rafListen(observ, fn) {
     }
 }
 
-},{"raf/polyfill":47}],5:[function(require,module,exports){
-var mercury = require("../../index.js")
-var h = require("../../index.js").h
+},{"raf":75}],8:[function(require,module,exports){
+'use strict';
 
-var doMutableFocus = require("./lib/do-mutable-focus.js")
+var hg = require('../../index.js');
+var h = require('../../index.js').h;
+var Router = require('../lib/router/');
+var document = require('global/document');
 
-var ESCAPE = 27
-var footer = infoFooter()
+var TodoItem = require('./todo-item.js');
 
-module.exports = render
+var ROOT_URI = String(document.location.pathname);
+var COMPLETED_URI = ROOT_URI + '/completed';
+var ACTIVE_URI = ROOT_URI + '/active';
 
-function render(state) {
-    return h(".todomvc-wrapper", [
-        h("link", {
-            rel: "stylesheet",
-            href: "https://rawgithub.com/raynos/mercury/master/examples/todomvc/style.css"
+module.exports = TodoApp;
+
+function TodoApp(opts) {
+    opts = opts || {};
+
+    var state = hg.state({
+        todos: hg.varhash(opts.todos || {}, TodoItem),
+        route: Router(),
+        field: hg.struct({
+            text: hg.value(opts.field && opts.field.text || '')
         }),
-        h("section#todoapp.todoapp", [
-            mercury.partial(header, state.field, state.events),
-            mainSection(state.todos, state.route, state.events),
-            mercury.partial(statsSection, state.todos, state.route, state.events)
-        ]),
-        footer
-    ])
+        handles: {
+            setTodoField: setTodoField,
+            add: add,
+            clearCompleted: clearCompleted,
+            toggleAll: toggleAll,
+            destroy: destroy
+        }
+    });
+
+    TodoItem.onDestroy.asHash(state.todos, function onDestroy(ev) {
+        destroy(state, ev);
+    });
+
+    return state;
 }
 
-function header(field, events) {
-    return h("header#header.header", {
-        "data-event": [
-            mercury.changeEvent(events.setTodoField),
-            mercury.submitEvent(events.add)
-        ]
-    }, [
-        h("h1", "Todos"),
-        h("input#new-todo.new-todo", {
-            placeholder: "What needs to be done?",
-            autofocus: true,
-            value: field.text,
-            name: "newTodo"
-        })
-    ])
-}
-
-function mainSection(todos, route, events) {
-    var allCompleted = todos.every(function (todo) {
-        return todo.completed
-    })
-    var visibleTodos = todos.filter(function (todo) {
-        return route === "completed" && todo.completed ||
-            route === "active" && !todo.completed ||
-            route === "all"
-    })
-
-    return h("section#main.main", { hidden: !todos.length }, [
-        h("input#toggle-all.toggle-all", {
-            type: "checkbox",
-            name: "toggle",
-            checked: allCompleted,
-            "data-change": mercury.valueEvent(events.toggleAll)
-        }),
-        h("label", { htmlFor: "toggle-all" }, "Mark all as complete"),
-        h("ul#todo-list.todolist", visibleTodos.map(function (todo) {
-            return todoItem(todo, events)
-        }))
-    ])
-}
-
-function todoItem(todo, events) {
-    var className = (todo.completed ? "completed " : "") +
-        (todo.editing ? "editing" : "")
-
-    return h("li", { className: className, key: todo.id }, [
-        h(".view", [
-            h("input.toggle", {
-                type: "checkbox",
-                checked: todo.completed,
-                "data-change": mercury.event(events.toggle, {
-                    id: todo.id,
-                    completed: !todo.completed
-                })
-            }),
-            h("label", {
-                "data-dblclick": mercury.event(events.startEdit, { id: todo.id })
-            }, todo.title),
-            h("button.destroy", {
-                "data-click": mercury.event(events.destroy, { id: todo.id })
-            })
-        ]),
-        h("input.edit", {
-            value: todo.title,
-            name: "title",
-            // when we need an RPC invocation we add a 
-            // custom mutable operation into the tree to be
-            // invoked at patch time
-            "data-focus": todo.editing ? doMutableFocus() : null,
-            "data-keydown": mercury.keyEvent(events.cancelEdit, ESCAPE, { id: todo.id }),
-            "data-event": mercury.submitEvent(events.finishEdit, { id: todo.id }),
-            "data-blur": mercury.valueEvent(events.finishEdit, { id: todo.id })
-        })
-    ])
-}
-
-function statsSection(todos, route, events) {
-    var todosLeft = todos.filter(function (todo) {
-        return !todo.completed
-    }).length
-    var todosCompleted = todos.length - todosLeft
-
-    return h("footer#footer.footer", { hidden: !todos.length }, [
-        h("span#todo-count.todo-count", [
-            h("strong", String(todosLeft)),
-            todosLeft === 1 ? " item" : " items",
-            " left"
-        ]),
-        h("ul#filters.filters", [
-            link("#/", "All", route === "all"),
-            link("#/active", "Active", route === "active"),
-            link("#/completed", "Completed", route === "completed")
-        ]),
-        h("button.clear-completed#clear-completed", {
-            hidden: todosCompleted === 0,
-            "data-click": mercury.event(events.clearCompleted)
-        }, "Clear completed (" + String(todosCompleted) + ")")
-    ])
-}
-
-function link(uri, text, isSelected) {
-    return h("li", [
-        h("a", { className: isSelected ? "selected" : "", href: uri }, text)
-    ])
-}
-
-function infoFooter() {
-    return h("footer#info.info", [
-        h("p", "Double-click to edit a todo"),
-        h("p", [
-            "Written by ",
-            h("a", { href: "https://github.com/Raynos" }, "Raynos")
-        ]),
-        h("p", [
-            "Part of ",
-            h("a", { href: "http://todomvc.com" }, "TodoMVC")
-        ])
-    ])
-}
-
-},{"../../index.js":8,"./lib/do-mutable-focus.js":3}],6:[function(require,module,exports){
-var cuid = require("cuid")
-var extend = require("xtend")
-var mercury = require("../../index.js")
-
-var TodoApp = {
-    todos: [],
-    route: "all",
-    field: {
-        text: ""
-    }
-}
-
-var TodoItem = {
-    id: null,
-    title: "",
-    editing: false,
-    completed: false
-}
-
-module.exports = {
-    todoApp: todoApp,
-    todoItem: todoItem
-}
-
-function todoApp(events, initialState) {
-    var state = extend(TodoApp, initialState)
-
-    return mercury.hash({
-        todos: mercury.array(state.todos.map(todoItem)),
-        route: mercury.value(state.route),
-        field: mercury.hash({
-            text :mercury.value(state.field.text)
-        }),
-        events: events
-    })
-}
-
-function todoItem(item) {
-    var state = extend(TodoItem, item)
-
-    return mercury.hash({
-        id: cuid(),
-        title: mercury.value(state.title),
-        editing: mercury.value(state.editing),
-        completed: mercury.value(state.completed)
-    })
-}
-
-},{"../../index.js":8,"cuid":16,"xtend":91}],7:[function(require,module,exports){
-var State = require("./state.js")
-
-module.exports = {
-    setRoute: setRoute,
-    toggleAll: toggleAll,
-    add: add,
-    setTodoField: setTodoField,
-    toggle: toggle,
-    destroy: destroy,
-    startEdit: startEdit,
-    finishEdit: finishEdit,
-    cancelEdit: cancelEdit,
-    clearCompleted: clearCompleted
-}
-
-function setRoute(state, route) {
-    state.route.set(route.substr(2) || "all")
-}
-
-function toggleAll(state, value) {
-    state.todos.forEach(function (todo) {
-        todo.completed.set(value.toggle)
-    })
+function setTodoField(state, data) {
+    state.field.text.set(data.newTodo);
 }
 
 function add(state, data) {
-    if (data.newTodo.trim() === "") {
-        return
+    if (data.newTodo.trim() === '') {
+        return;
     }
 
-    state.todos.push(State.todoItem({
+    var todo = TodoItem({
         title: data.newTodo.trim()
-    }))
-    state.field.text.set("")
-}
-
-
-function setTodoField(state, data) {
-    state.field.text.set(data.newTodo)
-}
-
-function toggle(state, data) {
-    var item = find(state.todos, data.id)
-    item.completed.set(data.completed)
-}
-
-function startEdit(state, data) {
-    var item = find(state.todos, data.id)
-    item.editing.set(true)
-}
-
-function destroy(state, data) {
-    var index = findIndex(state.todos, data.id)
-    state.todos.splice(index, 1)
-}
-
-function finishEdit(state, data) {
-    var item = find(state.todos, data.id)
-    if (!item || item.editing === false) return
-
-    item.editing.set(false)
-    item.title.set(data.title)
-
-    if (data.title.trim() === "") {
-        destroy(state, data)
-    }
-}
-
-function cancelEdit(state, data) {
-    var item = find(state.todos, data.id)
-
-    item.editing.set(false)
+    });
+    state.todos.put(todo.id(), todo);
+    state.field.text.set('');
 }
 
 function clearCompleted(state) {
-    state.todos().forEach(function (todo, index) {
-        if (todo.completed) {
-            destroy(state, todo)
+    Object.keys(state.todos).forEach(function clear(key) {
+        if (state.todos[key].completed()) {
+            destroy(state, state.todos[key]());
         }
-    })
+    });
 }
 
-function find(list, id) {
-    for (var i = 0; i < list.getLength(); i++) {
-        var item = list.get(i)
-        if (item.id === id) {
-            return item
+function toggleAll(state, value) {
+    Object.keys(state.todos).forEach(function toggle(key) {
+        state.todos[key].completed.set(value.toggle);
+    });
+}
+
+function destroy(state, opts) {
+    state.todos.delete(opts.id);
+}
+
+TodoApp.render = function render(state) {
+    return h('.todomvc-wrapper', {
+        style: { visibility: 'hidden' }
+    }, [
+        h('link', {
+            rel: 'stylesheet',
+            href: 'style.css'
+        }),
+        h('section#todoapp.todoapp', [
+            hg.partial(header, state.field, state.handles),
+            hg.partial(mainSection,
+                state.todos, state.route, state.handles),
+            hg.partial(statsSection,
+                state.todos, state.route, state.handles)
+        ]),
+        hg.partial(infoFooter)
+    ]);
+};
+
+function header(field, handles) {
+    return h('header#header.header', {
+        'ev-event': [
+            hg.changeEvent(handles.setTodoField),
+            hg.submitEvent(handles.add)
+        ]
+    }, [
+        h('h1', 'Todos'),
+        h('input#new-todo.new-todo', {
+            placeholder: 'What needs to be done?',
+            autofocus: true,
+            value: field.text,
+            name: 'newTodo'
+        })
+    ]);
+}
+
+function mainSection(todos, route, handles) {
+    var todosList = objectToArray(todos);
+
+    var allCompleted = todosList.every(function isComplete(todo) {
+        return todo.completed;
+    });
+    var visibleTodos = todosList.filter(function isVisible(todo) {
+        return route === COMPLETED_URI && todo.completed ||
+            route === ACTIVE_URI && !todo.completed ||
+            route === ROOT_URI;
+    });
+
+    return h('section#main.main', { hidden: !todosList.length }, [
+        h('input#toggle-all.toggle-all', {
+            type: 'checkbox',
+            name: 'toggle',
+            checked: allCompleted,
+            'ev-change': hg.valueEvent(handles.toggleAll)
+        }),
+        h('label', { htmlFor: 'toggle-all' }, 'Mark all as complete'),
+        h('ul#todo-list.todolist', visibleTodos
+            .map(function renderItem(todo) {
+                return TodoItem.render(todo, handles);
+            }))
+    ]);
+}
+
+function statsSection(todos, route, handles) {
+    var todosList = objectToArray(todos);
+    var todosLeft = todosList.filter(function notComplete(todo) {
+        return !todo.completed;
+    }).length;
+    var todosCompleted = todosList.length - todosLeft;
+
+    return h('footer#footer.footer', {
+        hidden: !todosList.length
+    }, [
+        h('span#todo-count.todo-count', [
+            h('strong', String(todosLeft)),
+            todosLeft === 1 ? ' item' : ' items',
+            ' left'
+        ]),
+        h('ul#filters.filters', [
+            link(ROOT_URI, 'All', route === ROOT_URI),
+            link(ACTIVE_URI, 'Active', route === ACTIVE_URI),
+            link(COMPLETED_URI, 'Completed',
+                route === COMPLETED_URI)
+        ]),
+        h('button.clear-completed#clear-completed', {
+            hidden: todosCompleted === 0,
+            'ev-click': hg.event(handles.clearCompleted)
+        }, 'Clear completed (' + String(todosCompleted) + ')')
+    ]);
+}
+
+function link(uri, text, isSelected) {
+    return h('li', [
+        Router.anchor({
+            className: isSelected ? 'selected' : '',
+            href: uri
+        }, text)
+    ]);
+}
+
+function infoFooter() {
+    return h('footer#info.info', [
+        h('p', 'Double-click to edit a todo'),
+        h('p', [
+            'Written by ',
+            h('a', { href: 'https://github.com/Raynos' }, 'Raynos')
+        ]),
+        h('p', [
+            'Part of ',
+            h('a', { href: 'http://todomvc.com' }, 'TodoMVC')
+        ])
+    ]);
+}
+
+function objectToArray(obj) {
+    return Object.keys(obj).map(function toItem(k) {
+        return obj[k];
+    });
+}
+
+},{"../../index.js":10,"../lib/router/":3,"./todo-item.js":9,"global/document":33}],9:[function(require,module,exports){
+'use strict';
+
+var hg = require('../../index.js');
+var h = require('../../index.js').h;
+var cuid = require('cuid');
+var WeakmapEvent = require('../lib/weakmap-event.js');
+
+var FocusHook = require('../lib/focus-hook.js');
+
+var DestroyEvent = WeakmapEvent();
+var ESCAPE = 27;
+
+TodoItem.onDestroy = DestroyEvent.listen;
+
+module.exports = TodoItem;
+
+function TodoItem(item) {
+    item = item || {};
+
+    return hg.state({
+        id: hg.value(item.id || cuid()),
+        title: hg.value(item.title || ''),
+        editing: hg.value(item.editing || false),
+        completed: hg.value(item.completed || false),
+        handles: {
+            toggle: toggle,
+            startEdit: startEdit,
+            cancelEdit: cancelEdit,
+            finishEdit: finishEdit
         }
+    });
+}
+
+function toggle(state, data) {
+    state.completed.set(data.completed);
+}
+
+function startEdit(state) {
+    state.editing.set(true);
+}
+
+function finishEdit(state, data) {
+    if (state.editing() === false) {
+        return;
     }
 
-    return null
-}
+    state.editing.set(false);
+    state.title.set(data.title);
 
-function findIndex(list, id) {
-    for (var i = 0; i < list.getLength(); i++) {
-        var item = list.get(i)
-        if (item.id === id) {
-            return i
-        }
+    if (data.title.trim() === '') {
+        DestroyEvent.broadcast(state, {
+            id: state.id()
+        });
     }
-
-    return null
 }
 
-},{"./state.js":6}],8:[function(require,module,exports){
+function cancelEdit(state) {
+    state.editing.set(false);
+}
+
+var sneakyGlobal = {};
+
+TodoItem.render = function render(todo, parentHandles) {
+    var className = (todo.completed ? 'completed ' : '') +
+        (todo.editing ? 'editing' : '');
+
+    sneakyGlobal[todo.id] = todo;
+
+    return h('li', { className: className, key: todo.id }, [
+        h('.view', [
+            h('input.toggle', {
+                type: 'checkbox',
+                checked: todo.completed,
+                'ev-change': hg.event(todo.handles.toggle, {
+                    completed: !todo.completed
+                })
+            }),
+            h('label', {
+                'ev-dblclick': hg.event(todo.handles.startEdit)
+            }, todo.title),
+            h('button.destroy', {
+                'ev-click': hg.event(parentHandles.destroy, {
+                    id: todo.id
+                })
+            })
+        ]),
+        h('input.edit', {
+            value: todo.title,
+            name: 'title',
+            // when we need an RPC invocation we add a
+            // custom mutable operation into the tree to be
+            // invoked at patch time
+            'ev-focus': todo.editing ? FocusHook() : null,
+            'ev-keydown': hg.keyEvent(
+                todo.handles.cancelEdit, ESCAPE),
+            'ev-event': hg.submitEvent(todo.handles.finishEdit),
+            'ev-blur': hg.valueEvent(todo.handles.finishEdit)
+        })
+    ]);
+
+};
+
+},{"../../index.js":10,"../lib/focus-hook.js":1,"../lib/weakmap-event.js":5,"cuid":17}],10:[function(require,module,exports){
+'use strict';
+
+var SingleEvent = require('geval/single');
+var MultipleEvent = require('geval/multiple');
+var extend = require('xtend');
+
 /*
     Pro tip: Don't require `mercury` itself.
       require and depend on all these modules directly!
 */
 var mercury = module.exports = {
     // Entry
-    main: require("main-loop"),
+    main: require('main-loop'),
+    app: app,
+
+    // Base
+    BaseEvent: require('value-event/base-event'),
 
     // Input
-    Delegator: require("dom-delegator"),
-    input: require("geval/multiple"),
-    event: require("value-event/event"),
-    valueEvent: require("value-event/value"),
-    submitEvent: require("value-event/submit"),
-    changeEvent: require("value-event/change"),
-    keyEvent: require("value-event/key"),
+    Delegator: require('dom-delegator'),
+    // deprecated: keep for back compat.
+    input: input,
+    handles: handles,
+    event: require('value-event/event'),
+    valueEvent: require('value-event/value'),
+    submitEvent: require('value-event/submit'),
+    changeEvent: require('value-event/change'),
+    keyEvent: require('value-event/key'),
+    clickEvent: require('value-event/click'),
 
     // State
-    array: require("observ-array"),
-    hash: require("observ-hash"),
-    value: require("observ"),
+    // deprecated: use observ-varhash instead.
+    array: require('observ-array'),
+    struct: require('observ-struct'),
+    // deprecated: alias struct as hash for back compat
+    hash: require('observ-struct'),
+    varhash: require('observ-varhash'),
+    value: require('observ'),
+    state: state,
 
     // Render
-    diff: require("virtual-dom/diff"),
-    patch: require("virtual-dom/patch"),
-    partial: require("vdom-thunk"),
-    create: require("virtual-dom/create-element"),
-    h: require("virtual-hyperscript"),
-    svg: require("virtual-hyperscript/svg"),
+    diff: require('vtree/diff'),
+    patch: require('vdom/patch'),
+    partial: require('vdom-thunk'),
+    create: require('vdom/create-element'),
+    h: require('virtual-hyperscript'),
+    // deprecated: keep for back compat.
+    svg: require('virtual-hyperscript/svg'),
 
-    // Utility
-    app: app
+    // Utilities
+    // deprecated: keep for back compat.
+    computed: require('observ/computed'),
+    // deprecated: keep for back compat.
+    watch: require('observ/watch')
+};
+
+function input(names) {
+    if (!names) {
+        return SingleEvent();
+    }
+
+    return MultipleEvent(names);
 }
 
-function app(elem, observ, render) {
-    mercury.Delegator();
-    var loop = mercury.main(observ(), render)
-    observ(loop.update)
-    elem.appendChild(loop.target)
+function state(obj) {
+    var copy = extend(obj);
+    var $handles = copy.handles;
+
+    if ($handles) {
+        copy.handles = mercury.value(null);
+    }
+
+    var observ = mercury.struct(copy);
+    if ($handles) {
+        observ.handles.set(mercury.handles($handles, observ));
+    }
+    return observ;
 }
 
-},{"dom-delegator":19,"geval/multiple":30,"main-loop":40,"observ":46,"observ-array":43,"observ-hash":45,"value-event/change":48,"value-event/event":49,"value-event/key":50,"value-event/submit":56,"value-event/value":57,"vdom-thunk":58,"virtual-dom/create-element":59,"virtual-dom/diff":60,"virtual-dom/patch":63,"virtual-hyperscript":82,"virtual-hyperscript/svg":90}],9:[function(require,module,exports){
+function handles(funcs, context) {
+    return Object.keys(funcs).reduce(createHandle, {});
 
-},{}],10:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
+    function createHandle(acc, name) {
+        var handle = mercury.Delegator.allocateHandle(
+            funcs[name].bind(null, context));
 
-function EventEmitter() {
-  this._events = this._events || {};
-  this._maxListeners = this._maxListeners || undefined;
-}
-module.exports = EventEmitter;
-
-// Backwards-compat with node 0.10.x
-EventEmitter.EventEmitter = EventEmitter;
-
-EventEmitter.prototype._events = undefined;
-EventEmitter.prototype._maxListeners = undefined;
-
-// By default EventEmitters will print a warning if more than 10 listeners are
-// added to it. This is a useful default which helps finding memory leaks.
-EventEmitter.defaultMaxListeners = 10;
-
-// Obviously not all Emitters should be limited to 10. This function allows
-// that to be increased. Set to zero for unlimited.
-EventEmitter.prototype.setMaxListeners = function(n) {
-  if (!isNumber(n) || n < 0 || isNaN(n))
-    throw TypeError('n must be a positive number');
-  this._maxListeners = n;
-  return this;
-};
-
-EventEmitter.prototype.emit = function(type) {
-  var er, handler, len, args, i, listeners;
-
-  if (!this._events)
-    this._events = {};
-
-  // If there is no 'error' event listener then throw.
-  if (type === 'error') {
-    if (!this._events.error ||
-        (isObject(this._events.error) && !this._events.error.length)) {
-      er = arguments[1];
-      if (er instanceof Error) {
-        throw er; // Unhandled 'error' event
-      } else {
-        throw TypeError('Uncaught, unspecified "error" event.');
-      }
-      return false;
+        acc[name] = handle;
+        return acc;
     }
-  }
-
-  handler = this._events[type];
-
-  if (isUndefined(handler))
-    return false;
-
-  if (isFunction(handler)) {
-    switch (arguments.length) {
-      // fast cases
-      case 1:
-        handler.call(this);
-        break;
-      case 2:
-        handler.call(this, arguments[1]);
-        break;
-      case 3:
-        handler.call(this, arguments[1], arguments[2]);
-        break;
-      // slower
-      default:
-        len = arguments.length;
-        args = new Array(len - 1);
-        for (i = 1; i < len; i++)
-          args[i - 1] = arguments[i];
-        handler.apply(this, args);
-    }
-  } else if (isObject(handler)) {
-    len = arguments.length;
-    args = new Array(len - 1);
-    for (i = 1; i < len; i++)
-      args[i - 1] = arguments[i];
-
-    listeners = handler.slice();
-    len = listeners.length;
-    for (i = 0; i < len; i++)
-      listeners[i].apply(this, args);
-  }
-
-  return true;
-};
-
-EventEmitter.prototype.addListener = function(type, listener) {
-  var m;
-
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  if (!this._events)
-    this._events = {};
-
-  // To avoid recursion in the case that type === "newListener"! Before
-  // adding it to the listeners, first emit "newListener".
-  if (this._events.newListener)
-    this.emit('newListener', type,
-              isFunction(listener.listener) ?
-              listener.listener : listener);
-
-  if (!this._events[type])
-    // Optimize the case of one listener. Don't need the extra array object.
-    this._events[type] = listener;
-  else if (isObject(this._events[type]))
-    // If we've already got an array, just append.
-    this._events[type].push(listener);
-  else
-    // Adding the second element, need to change to array.
-    this._events[type] = [this._events[type], listener];
-
-  // Check for listener leak
-  if (isObject(this._events[type]) && !this._events[type].warned) {
-    var m;
-    if (!isUndefined(this._maxListeners)) {
-      m = this._maxListeners;
-    } else {
-      m = EventEmitter.defaultMaxListeners;
-    }
-
-    if (m && m > 0 && this._events[type].length > m) {
-      this._events[type].warned = true;
-      console.error('(node) warning: possible EventEmitter memory ' +
-                    'leak detected. %d listeners added. ' +
-                    'Use emitter.setMaxListeners() to increase limit.',
-                    this._events[type].length);
-      console.trace();
-    }
-  }
-
-  return this;
-};
-
-EventEmitter.prototype.on = EventEmitter.prototype.addListener;
-
-EventEmitter.prototype.once = function(type, listener) {
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  var fired = false;
-
-  function g() {
-    this.removeListener(type, g);
-
-    if (!fired) {
-      fired = true;
-      listener.apply(this, arguments);
-    }
-  }
-
-  g.listener = listener;
-  this.on(type, g);
-
-  return this;
-};
-
-// emits a 'removeListener' event iff the listener was removed
-EventEmitter.prototype.removeListener = function(type, listener) {
-  var list, position, length, i;
-
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  if (!this._events || !this._events[type])
-    return this;
-
-  list = this._events[type];
-  length = list.length;
-  position = -1;
-
-  if (list === listener ||
-      (isFunction(list.listener) && list.listener === listener)) {
-    delete this._events[type];
-    if (this._events.removeListener)
-      this.emit('removeListener', type, listener);
-
-  } else if (isObject(list)) {
-    for (i = length; i-- > 0;) {
-      if (list[i] === listener ||
-          (list[i].listener && list[i].listener === listener)) {
-        position = i;
-        break;
-      }
-    }
-
-    if (position < 0)
-      return this;
-
-    if (list.length === 1) {
-      list.length = 0;
-      delete this._events[type];
-    } else {
-      list.splice(position, 1);
-    }
-
-    if (this._events.removeListener)
-      this.emit('removeListener', type, listener);
-  }
-
-  return this;
-};
-
-EventEmitter.prototype.removeAllListeners = function(type) {
-  var key, listeners;
-
-  if (!this._events)
-    return this;
-
-  // not listening for removeListener, no need to emit
-  if (!this._events.removeListener) {
-    if (arguments.length === 0)
-      this._events = {};
-    else if (this._events[type])
-      delete this._events[type];
-    return this;
-  }
-
-  // emit removeListener for all listeners on all events
-  if (arguments.length === 0) {
-    for (key in this._events) {
-      if (key === 'removeListener') continue;
-      this.removeAllListeners(key);
-    }
-    this.removeAllListeners('removeListener');
-    this._events = {};
-    return this;
-  }
-
-  listeners = this._events[type];
-
-  if (isFunction(listeners)) {
-    this.removeListener(type, listeners);
-  } else {
-    // LIFO order
-    while (listeners.length)
-      this.removeListener(type, listeners[listeners.length - 1]);
-  }
-  delete this._events[type];
-
-  return this;
-};
-
-EventEmitter.prototype.listeners = function(type) {
-  var ret;
-  if (!this._events || !this._events[type])
-    ret = [];
-  else if (isFunction(this._events[type]))
-    ret = [this._events[type]];
-  else
-    ret = this._events[type].slice();
-  return ret;
-};
-
-EventEmitter.listenerCount = function(emitter, type) {
-  var ret;
-  if (!emitter._events || !emitter._events[type])
-    ret = 0;
-  else if (isFunction(emitter._events[type]))
-    ret = 1;
-  else
-    ret = emitter._events[type].length;
-  return ret;
-};
-
-function isFunction(arg) {
-  return typeof arg === 'function';
 }
 
-function isNumber(arg) {
-  return typeof arg === 'number';
+function app(elem, observ, render, opts) {
+    mercury.Delegator(opts);
+    var loop = mercury.main(observ(), render, opts);
+    if (elem) {
+        elem.appendChild(loop.target);
+    }
+    return observ(loop.update);
 }
 
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
+},{"dom-delegator":20,"geval/multiple":30,"geval/single":31,"main-loop":35,"observ":72,"observ-array":63,"observ-struct":69,"observ-varhash":70,"observ/computed":71,"observ/watch":73,"value-event/base-event":79,"value-event/change":80,"value-event/click":81,"value-event/event":82,"value-event/key":83,"value-event/submit":89,"value-event/value":90,"vdom-thunk":92,"vdom/create-element":96,"vdom/patch":102,"virtual-hyperscript":107,"virtual-hyperscript/svg":126,"vtree/diff":127,"xtend":140}],11:[function(require,module,exports){
 
-function isUndefined(arg) {
-  return arg === void 0;
-}
-
-},{}],11:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 (function (global){
 /*! http://mths.be/punycode v1.2.4 by @mathias */
 ;(function(root) {
@@ -1290,7 +1184,7 @@ function isUndefined(arg) {
 }(this));
 
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],12:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1376,7 +1270,7 @@ var isArray = Array.isArray || function (xs) {
   return Object.prototype.toString.call(xs) === '[object Array]';
 };
 
-},{}],13:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1463,13 +1357,13 @@ var objectKeys = Object.keys || function (obj) {
   return res;
 };
 
-},{}],14:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 'use strict';
 
 exports.decode = exports.parse = require('./decode');
 exports.encode = exports.stringify = require('./encode');
 
-},{"./decode":12,"./encode":13}],15:[function(require,module,exports){
+},{"./decode":13,"./encode":14}],16:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2178,7 +2072,7 @@ function isNullOrUndefined(arg) {
   return  arg == null;
 }
 
-},{"punycode":11,"querystring":14}],16:[function(require,module,exports){
+},{"punycode":12,"querystring":15}],17:[function(require,module,exports){
 /**
  * cuid.js
  * Collision-resistant UID generator for browsers and node.
@@ -2290,7 +2184,7 @@ function isNullOrUndefined(arg) {
 
 }(this.applitude || this));
 
-},{}],17:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 var DataSet = require("data-set")
 
 module.exports = addEvent
@@ -2310,17 +2204,26 @@ function addEvent(target, type, handler) {
     }
 }
 
-},{"data-set":21}],18:[function(require,module,exports){
-var document = require("global/document")
+},{"data-set":22}],19:[function(require,module,exports){
+var globalDocument = require("global/document")
 var DataSet = require("data-set")
+var createStore = require("weakmap-shim/create-store")
 
 var addEvent = require("./add-event.js")
 var removeEvent = require("./remove-event.js")
 var ProxyEvent = require("./proxy-event.js")
 
+var HANDLER_STORE = createStore()
+
 module.exports = DOMDelegator
 
-function DOMDelegator() {
+function DOMDelegator(document) {
+    if (!(this instanceof DOMDelegator)) {
+        return new DOMDelegator(document);
+    }
+
+    document = document || globalDocument
+
     this.target = document.documentElement
     this.events = {}
     this.rawEventListeners = {}
@@ -2330,24 +2233,37 @@ function DOMDelegator() {
 DOMDelegator.prototype.addEventListener = addEvent
 DOMDelegator.prototype.removeEventListener = removeEvent
 
+DOMDelegator.allocateHandle =
+    function allocateHandle(func) {
+        var handle = new Handle()
+
+        HANDLER_STORE(handle).func = func;
+
+        return handle
+    }
+
+DOMDelegator.transformHandle =
+    function transformHandle(handle, broadcast) {
+        var func = HANDLER_STORE(handle).func
+
+        return this.allocateHandle(function (ev) {
+            broadcast(ev, func);
+        })
+    }
+
 DOMDelegator.prototype.addGlobalEventListener =
     function addGlobalEventListener(eventName, fn) {
-        var listeners = this.globalListeners[eventName]
-        if (!listeners) {
-            listeners = this.globalListeners[eventName] = []
-        }
-
+        var listeners = this.globalListeners[eventName] || [];
         if (listeners.indexOf(fn) === -1) {
             listeners.push(fn)
         }
+
+        this.globalListeners[eventName] = listeners;
     }
 
 DOMDelegator.prototype.removeGlobalEventListener =
     function removeGlobalEventListener(eventName, fn) {
-        var listeners = this.globalListeners[eventName]
-        if (!listeners) {
-            return
-        }
+        var listeners = this.globalListeners[eventName] || [];
 
         var index = listeners.indexOf(fn)
         if (index !== -1) {
@@ -2356,64 +2272,81 @@ DOMDelegator.prototype.removeGlobalEventListener =
     }
 
 DOMDelegator.prototype.listenTo = function listenTo(eventName) {
-    if (this.events[eventName]) {
+    if (!(eventName in this.events)) {
+        this.events[eventName] = 0;
+    }
+
+    this.events[eventName]++;
+
+    if (this.events[eventName] !== 1) {
         return
     }
 
-    this.events[eventName] = true
-    listen(this, eventName)
+    var listener = this.rawEventListeners[eventName]
+    if (!listener) {
+        listener = this.rawEventListeners[eventName] =
+            createHandler(eventName, this)
+    }
+
+    this.target.addEventListener(eventName, listener, true)
 }
 
 DOMDelegator.prototype.unlistenTo = function unlistenTo(eventName) {
-    if (!this.events[eventName]) {
+    if (!(eventName in this.events)) {
+        this.events[eventName] = 0;
+    }
+
+    if (this.events[eventName] === 0) {
+        throw new Error("already unlistened to event.");
+    }
+
+    this.events[eventName]--;
+
+    if (this.events[eventName] !== 0) {
         return
     }
 
-    this.events[eventName] = false
-    unlisten(this, eventName)
-}
-
-function listen(delegator, eventName) {
-    var listener = delegator.rawEventListeners[eventName]
-
-    if (!listener) {
-        listener = delegator.rawEventListeners[eventName] =
-            createHandler(eventName, delegator.globalListeners)
-    }
-
-    delegator.target.addEventListener(eventName, listener, true)
-}
-
-function unlisten(delegator, eventName) {
-    var listener = delegator.rawEventListeners[eventName]
+    var listener = this.rawEventListeners[eventName]
 
     if (!listener) {
         throw new Error("dom-delegator#unlistenTo: cannot " +
             "unlisten to " + eventName)
     }
 
-    delegator.target.removeEventListener(eventName, listener, true)
+    this.target.removeEventListener(eventName, listener, true)
 }
 
-function createHandler(eventName, globalListeners) {
+function createHandler(eventName, delegator) {
+    var globalListeners = delegator.globalListeners;
+    var delegatorTarget = delegator.target;
+
     return handler
 
     function handler(ev) {
         var globalHandlers = globalListeners[eventName] || []
-        var listener = getListener(ev.target, eventName)
 
-        var handlers = globalHandlers
-            .concat(listener ? listener.handlers : [])
-        if (handlers.length === 0) {
-            return
+        if (globalHandlers.length > 0) {
+            var globalEvent = new ProxyEvent(ev);
+            globalEvent.currentTarget = delegatorTarget;
+            callListeners(globalHandlers, globalEvent)
         }
 
-        var arg = new ProxyEvent(ev, listener)
+        findAndInvokeListeners(ev.target, ev, eventName)
+    }
+}
 
-        handlers.forEach(function (handler) {
-            typeof handler === "function" ?
-                handler(arg) : handler.handleEvent(arg)
-        })
+function findAndInvokeListeners(elem, ev, eventName) {
+    var listener = getListener(elem, eventName)
+
+    if (listener && listener.handlers.length > 0) {
+        var listenerEvent = new ProxyEvent(ev);
+        listenerEvent.currentTarget = listener.currentTarget
+        callListeners(listener.handlers, listenerEvent)
+
+        if (listenerEvent._bubbles) {
+            var nextTarget = listener.currentTarget.parentNode
+            findAndInvokeListeners(nextTarget, ev, eventName)
+        }
     }
 }
 
@@ -2436,22 +2369,49 @@ function getListener(target, type) {
     return new Listener(target, handlers)
 }
 
+function callListeners(handlers, ev) {
+    handlers.forEach(function (handler) {
+        if (typeof handler === "function") {
+            handler(ev)
+        } else if (typeof handler.handleEvent === "function") {
+            handler.handleEvent(ev)
+        } else if (handler.type === "dom-delegator-handle") {
+            HANDLER_STORE(handler).func(ev)
+        } else {
+            throw new Error("dom-delegator: unknown handler " +
+                "found: " + JSON.stringify(handlers));
+        }
+    })
+}
+
 function Listener(target, handlers) {
     this.currentTarget = target
     this.handlers = handlers
 }
 
-},{"./add-event.js":17,"./proxy-event.js":27,"./remove-event.js":28,"data-set":21,"global/document":33}],19:[function(require,module,exports){
+function Handle() {
+    this.type = "dom-delegator-handle"
+}
+
+},{"./add-event.js":18,"./proxy-event.js":27,"./remove-event.js":28,"data-set":22,"global/document":33,"weakmap-shim/create-store":25}],20:[function(require,module,exports){
 var Individual = require("individual")
+var cuid = require("cuid")
+var globalDocument = require("global/document")
 
 var DOMDelegator = require("./dom-delegator.js")
 
-var delegatorCache = Individual("__DOM_DELEGATOR_CACHE@7", {})
+var versionKey = "12"
+var cacheKey = "__DOM_DELEGATOR_CACHE@" + versionKey
+var cacheTokenKey = "__DOM_DELEGATOR_CACHE_TOKEN@" + versionKey
+var delegatorCache = Individual(cacheKey, {
+    delegators: {}
+})
 var commonEvents = [
     "blur", "change", "click",  "contextmenu", "dblclick",
     "error","focus", "focusin", "focusout", "input", "keydown",
     "keypress", "keyup", "load", "mousedown", "mouseup",
-    "resize", "scroll", "select", "submit", "unload",
+    "resize", "select", "submit", "touchcancel",
+    "touchend", "touchstart", "unload"
 ]
 
 /*  Delegator is a thin wrapper around a singleton `DOMDelegator`
@@ -2460,18 +2420,27 @@ var commonEvents = [
     Only one DOMDelegator should exist because we do not want
         duplicate event listeners bound to the DOM.
 
-    `Delegator` will also `listenTo()` all events unless 
+    `Delegator` will also `listenTo()` all events unless
         every caller opts out of it
 */
 module.exports = Delegator
 
 function Delegator(opts) {
     opts = opts || {}
-    var delegator = delegatorCache.delegator
+    var document = opts.document || globalDocument
+
+    var cacheKey = document[cacheTokenKey]
+
+    if (!cacheKey) {
+        cacheKey =
+            document[cacheTokenKey] = cuid()
+    }
+
+    var delegator = delegatorCache.delegators[cacheKey]
 
     if (!delegator) {
-        delegator = delegatorCache.delegator =
-            new DOMDelegator()
+        delegator = delegatorCache.delegators[cacheKey] =
+            new DOMDelegator(document)
     }
 
     if (opts.defaultEvents !== false) {
@@ -2483,9 +2452,10 @@ function Delegator(opts) {
     return delegator
 }
 
+Delegator.allocateHandle = DOMDelegator.allocateHandle;
+Delegator.transformHandle = DOMDelegator.transformHandle;
 
-
-},{"./dom-delegator.js":18,"individual":24}],20:[function(require,module,exports){
+},{"./dom-delegator.js":19,"cuid":17,"global/document":33,"individual":23}],21:[function(require,module,exports){
 module.exports = createHash
 
 function createHash(elem) {
@@ -2509,7 +2479,7 @@ function createHash(elem) {
     return hash
 }
 
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 var createStore = require("weakmap-shim/create-store")
 var Individual = require("individual")
 
@@ -2529,45 +2499,11 @@ function DataSet(elem) {
     return store.hash
 }
 
-},{"./create-hash.js":20,"individual":24,"weakmap-shim/create-store":22}],22:[function(require,module,exports){
-var hiddenStore = require('./hidden-store.js');
-
-module.exports = createStore;
-
-function createStore() {
-    var key = {};
-
-    return function (obj) {
-        if (typeof obj !== 'object' || obj === null) {
-            throw new Error('Weakmap-shim: Key must be object')
-        }
-
-        var store = obj.valueOf(key);
-        return store && store.identity === key ?
-            store : hiddenStore(obj, key);
-    };
-}
-
-},{"./hidden-store.js":23}],23:[function(require,module,exports){
-module.exports = hiddenStore;
-
-function hiddenStore(obj, key) {
-    var store = { identity: key };
-    var valueOf = obj.valueOf;
-
-    Object.defineProperty(obj, "valueOf", {
-        value: function (value) {
-            return value !== key ?
-                valueOf.apply(this, arguments) : store;
-        },
-        writable: true
-    });
-
-    return store;
-}
-
-},{}],24:[function(require,module,exports){
-var root = require("global")
+},{"./create-hash.js":21,"individual":23,"weakmap-shim/create-store":25}],23:[function(require,module,exports){
+(function (global){
+var root = typeof window !== 'undefined' ?
+    window : typeof global !== 'undefined' ?
+    global : {};
 
 module.exports = Individual
 
@@ -2584,17 +2520,8 @@ function Individual(key, value) {
     return value
 }
 
-},{"global":25}],25:[function(require,module,exports){
-(function (global){
-/*global window, global*/
-if (typeof global !== "undefined") {
-    module.exports = global
-} else if (typeof window !== "undefined") {
-    module.exports = window
-}
-
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],26:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -2619,6 +2546,43 @@ if (typeof Object.create === 'function') {
   }
 }
 
+},{}],25:[function(require,module,exports){
+var hiddenStore = require('./hidden-store.js');
+
+module.exports = createStore;
+
+function createStore() {
+    var key = {};
+
+    return function (obj) {
+        if (typeof obj !== 'object' || obj === null) {
+            throw new Error('Weakmap-shim: Key must be object')
+        }
+
+        var store = obj.valueOf(key);
+        return store && store.identity === key ?
+            store : hiddenStore(obj, key);
+    };
+}
+
+},{"./hidden-store.js":26}],26:[function(require,module,exports){
+module.exports = hiddenStore;
+
+function hiddenStore(obj, key) {
+    var store = { identity: key };
+    var valueOf = obj.valueOf;
+
+    Object.defineProperty(obj, "valueOf", {
+        value: function (value) {
+            return value !== key ?
+                valueOf.apply(this, arguments) : store;
+        },
+        writable: true
+    });
+
+    return store;
+}
+
 },{}],27:[function(require,module,exports){
 var inherits = require("inherits")
 
@@ -2639,15 +2603,15 @@ var rmouseEvent = /^(?:mouse|pointer|contextmenu)|click/
 
 module.exports = ProxyEvent
 
-function ProxyEvent(ev, listener) {
+function ProxyEvent(ev) {
     if (!(this instanceof ProxyEvent)) {
-        return new ProxyEvent(ev, listener)
+        return new ProxyEvent(ev)
     }
 
     if (rkeyEvent.test(ev.type)) {
-        return new KeyEvent(ev, listener)
+        return new KeyEvent(ev)
     } else if (rmouseEvent.test(ev.type)) {
-        return new MouseEvent(ev, listener)
+        return new MouseEvent(ev)
     }
 
     for (var i = 0; i < ALL_PROPS.length; i++) {
@@ -2656,14 +2620,18 @@ function ProxyEvent(ev, listener) {
     }
 
     this._rawEvent = ev
-    this.currentTarget = listener ? listener.currentTarget : null
+    this._bubbles = false;
 }
 
 ProxyEvent.prototype.preventDefault = function () {
     this._rawEvent.preventDefault()
 }
 
-function MouseEvent(ev, listener) {
+ProxyEvent.prototype.startPropagation = function () {
+    this._bubbles = true;
+}
+
+function MouseEvent(ev) {
     for (var i = 0; i < ALL_PROPS.length; i++) {
         var propKey = ALL_PROPS[i]
         this[propKey] = ev[propKey]
@@ -2675,12 +2643,11 @@ function MouseEvent(ev, listener) {
     }
 
     this._rawEvent = ev
-    this.currentTarget = listener ? listener.currentTarget : null
 }
 
 inherits(MouseEvent, ProxyEvent)
 
-function KeyEvent(ev, listener) {
+function KeyEvent(ev) {
     for (var i = 0; i < ALL_PROPS.length; i++) {
         var propKey = ALL_PROPS[i]
         this[propKey] = ev[propKey]
@@ -2692,12 +2659,11 @@ function KeyEvent(ev, listener) {
     }
 
     this._rawEvent = ev
-    this.currentTarget = listener ? listener.currentTarget : null
 }
 
 inherits(KeyEvent, ProxyEvent)
 
-},{"inherits":26}],28:[function(require,module,exports){
+},{"inherits":24}],28:[function(require,module,exports){
 var DataSet = require("data-set")
 
 module.exports = removeEvent
@@ -2718,7 +2684,7 @@ function removeEvent(target, type, handler) {
     }
 }
 
-},{"data-set":21}],29:[function(require,module,exports){
+},{"data-set":22}],29:[function(require,module,exports){
 module.exports = Event
 
 function Event() {
@@ -2789,281 +2755,56 @@ function Source(broadcaster) {
 }
 
 },{"./event.js":29}],33:[function(require,module,exports){
-if (typeof document !== "undefined") {
+(function (global){
+var topLevel = typeof global !== 'undefined' ? global :
+    typeof window !== 'undefined' ? window : {}
+var minDoc = require('min-document');
+
+if (typeof document !== 'undefined') {
     module.exports = document;
 } else {
-    module.exports = require("min-document");
+    var doccy = topLevel['__GLOBAL_DOCUMENT_CACHE@4'];
+
+    if (!doccy) {
+        doccy = topLevel['__GLOBAL_DOCUMENT_CACHE@4'] = minDoc;
+    }
+
+    module.exports = doccy;
 }
 
-},{"min-document":9}],34:[function(require,module,exports){
+}).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"min-document":11}],34:[function(require,module,exports){
 (function (global){
 if (typeof window !== "undefined") {
     module.exports = window;
 } else if (typeof global !== "undefined") {
     module.exports = global;
+} else if (typeof self !== "undefined"){
+    module.exports = self;
 } else {
     module.exports = {};
 }
 
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{}],35:[function(require,module,exports){
-var Router = require("routes")
-var url = require("url")
-var location = require("global/document").location
-var EventEmitter = require("events").EventEmitter
-var extend = require("xtend/mutable")
+var raf = require("raf")
+var vtreeDiff = require("vtree/diff")
+var vdomCreate = require("vdom/create-element")
+var vdomPatch = require("vdom/patch")
+var TypedError = require("error/typed")
 
-module.exports = HashRouter
-
-function HashRouter(opts) {
-    function applyChange(event) {
-        var hash = getRoute()
-        var newHash = hash
-        var oldHash = "#/"
-
-        if (event && event.newURL && event.oldURL) {
-            var newUrl = url.parse(event.newURL)
-            if (newUrl && "hash" in newUrl) {
-                newHash = newUrl.hash
-            }
-
-            var oldUrl = url.parse(event.oldURL)
-            if (oldUrl && "hash" in oldUrl) {
-                oldHash = oldUrl.hash
-            }
-        }
-
-        var route = router.match(hash)
-        if (route) {
-            route.fn(hash, {
-                params: route.params,
-                splats: route.splats,
-                newUrl: newHash,
-                oldUrl: oldHash
-            })
-        }
-
-        applyChange.emit("hash", hash, {
-            newUrl: newHash, oldUrl: oldHash
-        })
-    }
-
-    opts = opts || {}
-    var setRoute = opts.setRoute || defaultSetRoute
-    var getRoute = opts.getRoute || defaultGetRoute
-
-    var router = Router()
-
-    applyChange.go = setRoute
-    applyChange.get = getRoute
-    applyChange.addRoute = router.addRoute.bind(router)
-
-    extend(applyChange, EventEmitter.prototype)
-    EventEmitter.call(applyChange)
-
-    return applyChange
-}
-
-function defaultSetRoute(uri) {
-    location.hash = uri
-}
-
-function defaultGetRoute() {
-    return location.hash || "#/"
-}
-
-},{"events":10,"global/document":36,"routes":37,"url":15,"xtend/mutable":39}],36:[function(require,module,exports){
-if (typeof document !== "undefined") {
-    module.exports = document
-} else {
-    module.exports = require("min-document")
-}
-
-},{"min-document":9}],37:[function(require,module,exports){
-
-var localRoutes = [];
-
-
-/**
- * Convert path to route object
- *
- * A string or RegExp should be passed,
- * will return { re, src, keys} obj
- *
- * @param  {String / RegExp} path
- * @return {Object}
- */
- 
-var Route = function(path){
-  //using 'new' is optional
-  
-  var src, re, keys = [];
-  
-  if(path instanceof RegExp){
-    re = path;
-    src = path.toString();
-  }else{
-    re = pathToRegExp(path, keys);
-    src = path;
-  }
-
-  return {
-  	 re: re,
-  	 src: path.toString(),
-  	 keys: keys
-  }
-};
-
-/**
- * Normalize the given path string,
- * returning a regular expression.
- *
- * An empty array should be passed,
- * which will contain the placeholder
- * key names. For example "/user/:id" will
- * then contain ["id"].
- *
- * @param  {String} path
- * @param  {Array} keys
- * @return {RegExp}
- */
-var pathToRegExp = function (path, keys) {
-	path = path
-		.concat('/?')
-		.replace(/\/\(/g, '(?:/')
-		.replace(/(\/)?(\.)?:(\w+)(?:(\(.*?\)))?(\?)?/g, function(_, slash, format, key, capture, optional){
-			keys.push(key);
-			slash = slash || '';
-			return ''
-				+ (optional ? '' : slash)
-				+ '(?:'
-				+ (optional ? slash : '')
-				+ (format || '') + (capture || '([^/]+?)') + ')'
-				+ (optional || '');
-		})
-		.replace(/([\/.])/g, '\\$1')
-		.replace(/\*/g, '(.+)');
-	return new RegExp('^' + path + '$', 'i');
-};
-
-/**
- * Attempt to match the given request to
- * one of the routes. When successful
- * a  {fn, params, splats} obj is returned
- *
- * @param  {Array} routes
- * @param  {String} uri
- * @return {Object}
- */
-var match = function (routes, uri) {
-	var captures, i = 0;
-
-	for (var len = routes.length; i < len; ++i) {
-		var route = routes[i],
-		    re = route.re,
-		    keys = route.keys,
-		    splats = [],
-		    params = {};
-
-		if (captures = re.exec(uri)) {
-			for (var j = 1, len = captures.length; j < len; ++j) {
-				var key = keys[j-1],
-					val = typeof captures[j] === 'string'
-						? decodeURIComponent(captures[j])
-						: captures[j];
-				if (key) {
-					params[key] = val;
-				} else {
-					splats.push(val);
-				}
-			}
-			return {
-				params: params,
-				splats: splats,
-				route: route.src
-			};
-		}
-	}
-};
-
-/**
- * Default "normal" router constructor.
- * accepts path, fn tuples via addRoute
- * returns {fn, params, splats, route}
- *  via match
- *
- * @return {Object}
- */
- 
-var Router = function(){
-  //using 'new' is optional
-  return {
-    routes: [],
-    routeMap : {},
-    addRoute: function(path, fn){
-      if (!path) throw new Error(' route requires a path');
-      if (!fn) throw new Error(' route ' + path.toString() + ' requires a callback');
-
-      var route = Route(path);
-      route.fn = fn;
-
-      this.routes.push(route);
-      this.routeMap[path] = fn;
-    },
-
-    match: function(pathname){
-      var route = match(this.routes, pathname);
-      if(route){
-        route.fn = this.routeMap[route.route];
-      }
-      return route;
-    }
-  }
-};
-
-Router.Route = Route
-Router.pathToRegExp = pathToRegExp
-Router.match = match
-// back compat
-Router.Router = Router
-
-module.exports = Router
-
-},{}],38:[function(require,module,exports){
-module.exports = hasKeys
-
-function hasKeys(source) {
-    return source !== null &&
-        (typeof source === "object" ||
-        typeof source === "function")
-}
-
-},{}],39:[function(require,module,exports){
-var hasKeys = require("./has-keys")
-
-module.exports = extend
-
-function extend(target) {
-    var sources = [].slice.call(arguments, 1)
-
-    sources.forEach(function (source) {
-        if (!hasKeys(source)) {
-            return
-        }
-
-        Object.keys(source).forEach(function (name) {
-            target[name] = source[name]
-        })
-    })
-
-    return target
-}
-
-},{"./has-keys":38}],40:[function(require,module,exports){
-var raf = require("raf/polyfill")
-var vdomCreate = require("virtual-dom/create-element")
-var vdomDiff = require("virtual-dom/diff")
-var vdomPatch = require("virtual-dom/patch")
+var InvalidUpdateInRender = TypedError({
+    type: "main-loop.invalid.update.in-render",
+    message: "main-loop: Unexpected update occurred in loop.\n" +
+        "We are currently rendering a view, " +
+            "you can't change state right now.\n" +
+        "The diff is: {stringDiff}.\n" +
+        "SUGGESTED FIX: find the state mutation in your view " +
+            "or rendering function and remove it.\n" +
+        "The view should not have any side effects.\n",
+    diff: null,
+    stringDiff: null
+})
 
 module.exports = main
 
@@ -3072,16 +2813,15 @@ function main(initialState, view, opts) {
 
     var currentState = initialState
     var create = opts.create || vdomCreate
-    var diff = opts.diff || vdomDiff
+    var diff = opts.diff || vtreeDiff
     var patch = opts.patch || vdomPatch
-    var looping = true
+    var redrawScheduled = false
 
-    var tree = view(currentState)
-    var target = create(tree, opts)
+    var tree = opts.initialTree || view(currentState)
+    var target = opts.target || create(tree, opts)
+    var inRenderingTransaction = false
 
     currentState = null
-
-    raf(redraw)
 
     return {
         target: target,
@@ -3089,8 +2829,15 @@ function main(initialState, view, opts) {
     }
 
     function update(state) {
-        if (currentState === null && !looping) {
-            looping = true
+        if (inRenderingTransaction) {
+            throw InvalidUpdateInRender({
+                diff: state._diff,
+                stringDiff: JSON.stringify(state._diff)
+            })
+        }
+
+        if (currentState === null && !redrawScheduled) {
+            redrawScheduled = true
             raf(redraw)
         }
 
@@ -3098,574 +2845,130 @@ function main(initialState, view, opts) {
     }
 
     function redraw() {
+        redrawScheduled = false;
         if (currentState === null) {
-            looping = false
             return
         }
 
+        inRenderingTransaction = true
         var newTree = view(currentState)
 
         if (opts.createOnly) {
             create(newTree, opts)
         } else {
             var patches = diff(tree, newTree, opts)
-            patch(target, patches, opts)
+            target = patch(target, patches, opts)
         }
 
+        inRenderingTransaction = false
         tree = newTree
         currentState = null
-
-        raf(redraw)
     }
 }
 
-},{"raf/polyfill":47,"virtual-dom/create-element":59,"virtual-dom/diff":60,"virtual-dom/patch":63}],41:[function(require,module,exports){
-module.exports = addListener
+},{"error/typed":39,"raf":75,"vdom/create-element":41,"vdom/patch":47,"vtree/diff":49}],36:[function(require,module,exports){
+module.exports = function(obj) {
+    if (typeof obj === 'string') return camelCase(obj);
+    return walk(obj);
+};
 
-function addListener(observArray, observ) {
-    var list = observArray._list
-
-    return observ(function (value) {
-        var valueList =  observArray().slice()
-        var index = list.indexOf(observ)
-
-        // This code path should never hit. If this happens
-        // there's a bug in the cleanup code
-        if (index === -1) {
-            var message = "observ-array: Unremoved observ listener"
-            var err = new Error(message)
-            err.list = list
-            err.index = index
-            err.observ = observ
-            throw err
-        }
-
-        valueList.splice(index, 1, value)
-        valueList._diff = [index, 1, value]
-
-        observArray.set(valueList)
-    })
+function walk (obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    if (isDate(obj) || isRegex(obj)) return obj;
+    if (isArray(obj)) return map(obj, walk);
+    return reduce(objectKeys(obj), function (acc, key) {
+        var camel = camelCase(key);
+        acc[camel] = walk(obj[key]);
+        return acc;
+    }, {});
 }
 
-},{}],42:[function(require,module,exports){
-var ObservArray = require("./index.js")
-
-var slice = Array.prototype.slice
-
-var ARRAY_METHODS = [
-    "concat", "slice", "every", "filter", "forEach", "indexOf",
-    "join", "lastIndexOf", "map", "reduce", "reduceRight",
-    "some", "toString", "toLocaleString"
-]
-
-var methods = ARRAY_METHODS.map(function (name) {
-    return [name, function () {
-        var res = this._list[name].apply(this._list, arguments)
-
-        if (res && Array.isArray(res)) {
-            res = ObservArray(res)
-        }
-
-        return res
-    }]
-})
-
-module.exports = ArrayMethods
-
-function ArrayMethods(obs) {
-    obs.push = observArrayPush
-    obs.pop = observArrayPop
-    obs.shift = observArrayShift
-    obs.unshift = observArrayUnshift
-    obs.reverse = notImplemented
-    obs.sort = notImplemented
-
-    methods.forEach(function (tuple) {
-        obs[tuple[0]] = tuple[1]
-    })
-    return obs
-}
-
-
-
-function observArrayPush() {
-    var args = slice.call(arguments)
-    args.unshift(this._list.length, 0)
-    this.splice.apply(this, args)
-
-    return this._list.length
-}
-function observArrayPop() {
-    return this.splice(this._list.length - 1, 1)[0]
-}
-function observArrayShift() {
-    return this.splice(0, 1)[0]
-}
-function observArrayUnshift() {
-    var args = slice.call(arguments)
-    args.unshift(0, 0)
-    this.splice.apply(this, args)
-
-    return this._list.length
-}
-
-
-function notImplemented() {
-    throw new Error("Pull request welcome")
-}
-
-},{"./index.js":43}],43:[function(require,module,exports){
-var Observ = require("observ")
-
-// circular dep between ArrayMethods & this file
-module.exports = ObservArray
-
-var splice = require("./splice.js")
-var ArrayMethods = require("./array-methods.js")
-var addListener = require("./add-listener.js")
-
-/*  ObservArray := (Array<T>) => Observ<
-        Array<T> & { _diff: Array }
-    > & {
-        splice: (index: Number, amount: Number, rest...: T) =>
-            Array<T>,
-        push: (values...: T) => Number,
-        filter: (lambda: Function, thisValue: Any) => Array<T>,
-        indexOf: (item: T, fromIndex: Number) => Number
-    }
-
-    Fix to make it more like ObservHash.
-
-    I.e. you write observables into it. 
-        reading methods take plain JS objects to read
-        and the value of the array is always an array of plain
-        objsect.
-
-        The observ array instance itself would have indexed 
-        properties that are the observables
-*/
-function ObservArray(initialList) {
-    // list is the internal mutable list observ instances that
-    // all methods on `obs` dispatch to.
-    var list = initialList
-    var initialState = []
-
-    // copy state out of initialList into initialState
-    list.forEach(function (observ, index) {
-        initialState[index] = typeof observ === "function" ?
-            observ() : observ
-    })
-
-    var obs = Observ(initialState)
-    obs.splice = splice
-
-    obs.get = get
-    obs.getLength = getLength
-    obs.put = put
-
-    // you better not mutate this list directly
-    // this is the list of observs instances
-    obs._list = list
-
-    var removeListeners = list.map(function (observ) {
-        return typeof observ === "function" ?
-            addListener(obs, observ) :
-            null
+function camelCase(str) {
+    return str.replace(/[_.-](\w|$)/g, function (_,x) {
+        return x.toUpperCase();
     });
-    // this is a list of removal functions that must be called
-    // when observ instances are removed from `obs.list`
-    // not calling this means we do not GC our observ change
-    // listeners. Which causes rage bugs
-    obs._removeListeners = removeListeners
-
-    return ArrayMethods(obs, list)
 }
 
-function get(index) {
-    return this._list[index]
+var isArray = Array.isArray || function (obj) {
+    return Object.prototype.toString.call(obj) === '[object Array]';
+};
+
+var isDate = function (obj) {
+    return Object.prototype.toString.call(obj) === '[object Date]';
+};
+
+var isRegex = function (obj) {
+    return Object.prototype.toString.call(obj) === '[object RegExp]';
+};
+
+var has = Object.prototype.hasOwnProperty;
+var objectKeys = Object.keys || function (obj) {
+    var keys = [];
+    for (var key in obj) {
+        if (has.call(obj, key)) keys.push(key);
+    }
+    return keys;
+};
+
+function map (xs, f) {
+    if (xs.map) return xs.map(f);
+    var res = [];
+    for (var i = 0; i < xs.length; i++) {
+        res.push(f(xs[i], i));
+    }
+    return res;
 }
 
-function put(index, value) {
-    this.splice(index, 1, value)
+function reduce (xs, f, acc) {
+    if (xs.reduce) return xs.reduce(f, acc);
+    for (var i = 0; i < xs.length; i++) {
+        acc = f(acc, xs[i], i);
+    }
+    return acc;
 }
 
-function getLength() {
-    return this._list.length
-}
-
-},{"./add-listener.js":41,"./array-methods.js":42,"./splice.js":44,"observ":46}],44:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
+var nargs = /\{([0-9a-zA-Z]+)\}/g
 var slice = Array.prototype.slice
 
-var addListener = require("./add-listener.js")
+module.exports = template
 
-module.exports = splice
+function template(string) {
+    var args
 
-// `obs.splice` is a mutable implementation of `splice()`
-// that mutates both `list` and the internal `valueList` that
-// is the current value of `obs` itself
-function splice(index, amount) {
-    var obs = this
-    var args = slice.call(arguments, 0)
-    var valueList = obs().slice()
-
-    // generate a list of args to mutate the internal
-    // list of only obs
-    var valueArgs = args.map(function (value, index) {
-        if (index === 0 || index === 1) {
-            return value
-        }
-
-        // must unpack observables that we are adding
-        return typeof value === "function" ? value() : value
-    })
-
-    valueList.splice.apply(valueList, valueArgs)
-    // we remove the observs that we remove
-    var removed = obs._list.splice.apply(obs._list, args)
-
-    var extraRemoveListeners = args.slice(2).map(function (observ) {
-        return typeof observ === "function" ?
-            addListener(obs, observ) :
-            null
-    })
-    extraRemoveListeners.unshift(args[0], args[1])
-    var removedListeners = obs._removeListeners.splice
-        .apply(obs._removeListeners, extraRemoveListeners)
-
-    removedListeners.forEach(function (removeObservListener) {
-        if (removeObservListener) {
-            removeObservListener()
-        }
-    })
-
-    valueList._diff = valueArgs
-
-    obs.set(valueList)
-    return removed
-}
-
-},{"./add-listener.js":41}],45:[function(require,module,exports){
-var Observ = require("observ")
-var extend = require("xtend")
-
-/* ObservHash := (Object<String, Observ<T>>) => 
-    Object<String, Observ<T>> &
-        Observ<Object<String, T> & {
-            _diff: Object<String, Any>
-        }>
-
-*/
-module.exports = ObservHash
-
-function ObservHash(hash) {
-    var keys = Object.keys(hash)
-
-    var initialState = {}
-
-    keys.forEach(function (key) {
-        var observ = hash[key]
-        initialState[key] = typeof observ === "function" ?
-            observ() : observ
-    })
-
-    var obs = Observ(initialState)
-    keys.forEach(function (key) {
-        var observ = hash[key]
-        obs[key] = observ
-
-        if (typeof observ === "function") {
-            observ(function (value) {
-                var state = extend(obs())
-                state[key] = value
-                var diff = {}
-                diff[key] = value && value._diff ?
-                    value._diff : value
-                state._diff = diff
-                obs.set(state)
-            })
-        }
-    })
-
-    return obs
-}
-
-},{"observ":46,"xtend":91}],46:[function(require,module,exports){
-module.exports = Observable
-
-function Observable(value) {
-    var listeners = []
-    value = value === undefined ? null : value
-
-    observable.set = function (v) {
-        value = v
-        listeners.forEach(function (f) {
-            f(v)
-        })
-    }
-
-    return observable
-
-    function observable(listener) {
-        if (!listener) {
-            return value
-        }
-
-        listeners.push(listener)
-
-        return function remove() {
-            listeners.splice(listeners.indexOf(listener), 1)
-        }
-    }
-}
-
-},{}],47:[function(require,module,exports){
-var global = typeof window === 'undefined' ? this : window
-
-var _raf =
-  global.requestAnimationFrame ||
-  global.webkitRequestAnimationFrame ||
-  global.mozRequestAnimationFrame ||
-  global.msRequestAnimationFrame ||
-  global.oRequestAnimationFrame ||
-  (global.setImmediate ? function(fn, el) {
-    setImmediate(fn)
-  } :
-  function(fn, el) {
-    setTimeout(fn, 0)
-  })
-
-module.exports = _raf
-
-},{}],48:[function(require,module,exports){
-var extend = require('xtend')
-var getFormData = require('form-data-set/element')
-
-module.exports = ChangeSinkHandler
-
-function ChangeSinkHandler(sink, data) {
-    if (!(this instanceof ChangeSinkHandler)) {
-        return new ChangeSinkHandler(sink, data)
-    }
-
-    this.sink = sink
-    this.data = data
-    this.type = 'change'
-    this.id = sink.id
-}
-
-ChangeSinkHandler.prototype.handleEvent = handleEvent
-
-function handleEvent(ev) {
-    var target = ev.target
-
-    var isValid =
-        (ev.type === 'change' && target.type === 'checkbox') ||
-        (ev.type === 'input' && target.type === 'text') ||
-        (ev.type === 'change' && target.type === 'range')
-
-    if (!isValid) {
-        return
-    }
-
-    var value = getFormData(ev.currentTarget)
-    var data = extend(value, this.data)
-
-    if (typeof this.sink === 'function') {
-        this.sink(data)
+    if (arguments.length === 2 && typeof arguments[1] === "object") {
+        args = arguments[1]
     } else {
-        this.sink.write(data)
-    }
-}
-
-},{"form-data-set/element":52,"xtend":55}],49:[function(require,module,exports){
-module.exports = SinkEventHandler
-
-function SinkEventHandler(sink, data) {
-    if (!(this instanceof SinkEventHandler)) {
-        return new SinkEventHandler(sink, data)
+        args = slice.call(arguments, 1)
     }
 
-    this.sink = sink
-    this.id = sink.id
-    this.data = data
-}
-
-SinkEventHandler.prototype.handleEvent = handleEvent
-
-function handleEvent(ev) {
-    if (typeof this.sink === 'function') {
-        this.sink(this.data)
-    } else {
-        this.sink.write(this.data)
-    }
-}
-
-},{}],50:[function(require,module,exports){
-module.exports = KeyEventHandler
-
-function KeyEventHandler(fn, key, data) {
-    if (!(this instanceof KeyEventHandler)) {
-        return new KeyEventHandler(fn, key, data)
+    if (!args || !args.hasOwnProperty) {
+        args = {}
     }
 
-    this.fn = fn
-    this.data = data
-    this.key = key
-}
+    return string.replace(nargs, function replaceArg(match, i, index) {
+        var result
 
-KeyEventHandler.prototype.handleEvent = handleEvent
-
-function handleEvent(ev) {
-    if (ev.keyCode === this.key) {
-        this.fn(this.data)
-    }
-}
-
-},{}],51:[function(require,module,exports){
-var slice = Array.prototype.slice
-
-module.exports = iterativelyWalk
-
-function iterativelyWalk(nodes, cb) {
-    if (!('length' in nodes)) {
-        nodes = [nodes]
-    }
-    
-    nodes = slice.call(nodes)
-
-    while(nodes.length) {
-        var node = nodes.shift(),
-            ret = cb(node)
-
-        if (ret) {
-            return ret
-        }
-
-        if (node.childNodes.length) {
-            nodes = slice.call(node.childNodes).concat(nodes)
-        }
-    }
-}
-
-},{}],52:[function(require,module,exports){
-var walk = require('dom-walk')
-
-var FormData = require('./index.js')
-
-module.exports = getFormData
-
-function buildElems(rootElem) {
-    var hash = {}
-
-    walk(rootElem, function (child) {
-        if (child.name) {
-            hash[child.name] = child
-        }
-    })
-
-
-    return hash
-}
-
-function getFormData(rootElem) {
-    var elements = buildElems(rootElem)
-
-    return FormData(elements)
-}
-
-},{"./index.js":53,"dom-walk":51}],53:[function(require,module,exports){
-/*jshint maxcomplexity: 10*/
-
-module.exports = FormData
-
-//TODO: Massive spec: http://www.whatwg.org/specs/web-apps/current-work/multipage/association-of-controls-and-forms.html#constructing-form-data-set
-function FormData(elements) {
-    return Object.keys(elements).reduce(function (acc, key) {
-        var elem = elements[key]
-
-        acc[key] = valueOfElement(elem)
-
-        return acc
-    }, {})
-}
-
-function valueOfElement(elem) {
-    if (typeof elem === "function") {
-        return elem()
-    } else if (containsRadio(elem)) {
-        var elems = toList(elem)
-        var checked = elems.filter(function (elem) {
-            return elem.checked
-        })[0] || null
-
-        return checked ? checked.value : null
-    } else if (Array.isArray(elem)) {
-        return elem.map(valueOfElement).filter(filterNull)
-    } else if (elem.tagName === undefined && elem.nodeType === undefined) {
-        return FormData(elem)
-    } else if (elem.tagName === "INPUT" && isChecked(elem)) {
-        if (elem.hasAttribute("value")) {
-            return elem.checked ? elem.value : null
+        if (string[index - 1] === "{" &&
+            string[index + match.length] === "}") {
+            return i
         } else {
-            return elem.checked
+            result = args.hasOwnProperty(i) ? args[i] : null
+            if (result === null || result === undefined) {
+                return ""
+            }
+
+            return result
         }
-    } else if (elem.tagName === "INPUT") {
-        return elem.value
-    } else if (elem.tagName === "TEXTAREA") {
-        return elem.value
-    } else if (elem.tagName === "SELECT") {
-        return elem.value
-    }
-}
-
-function isChecked(elem) {
-    return elem.type === "checkbox" || elem.type === "radio"
-}
-
-function containsRadio(value) {
-    if (value.tagName || value.nodeType) {
-        return false
-    }
-
-    var elems = toList(value)
-
-    return elems.some(function (elem) {
-        return elem.tagName === "INPUT" && elem.type === "radio"
     })
 }
 
-function toList(value) {
-    if (Array.isArray(value)) {
-        return value
-    }
-
-    return Object.keys(value).map(prop, value)
-}
-
-function prop(x) {
-    return this[x]
-}
-
-function filterNull(val) {
-    return val !== null
-}
-
-},{}],54:[function(require,module,exports){
-module.exports=require(38)
-},{}],55:[function(require,module,exports){
-var hasKeys = require("./has-keys")
-
+},{}],38:[function(require,module,exports){
 module.exports = extend
 
-function extend() {
-    var target = {}
-
-    for (var i = 0; i < arguments.length; i++) {
+function extend(target) {
+    for (var i = 1; i < arguments.length; i++) {
         var source = arguments[i]
-
-        if (!hasKeys(source)) {
-            continue
-        }
 
         for (var key in source) {
             if (source.hasOwnProperty(key)) {
@@ -3677,205 +2980,59 @@ function extend() {
     return target
 }
 
-},{"./has-keys":54}],56:[function(require,module,exports){
-var extend = require('xtend')
-var getFormData = require('form-data-set/element')
+},{}],39:[function(require,module,exports){
+var camelize = require("camelize")
+var template = require("string-template")
+var extend = require("xtend/mutable")
 
-var ENTER = 13
+module.exports = TypedError
 
-module.exports = SubmitSinkHandler
-
-function SubmitSinkHandler(sink, data) {
-    if (!(this instanceof SubmitSinkHandler)) {
-        return new SubmitSinkHandler(sink, data)
+function TypedError(args) {
+    if (!args) {
+        throw new Error("args is required");
+    }
+    if (!args.type) {
+        throw new Error("args.type is required");
+    }
+    if (!args.message) {
+        throw new Error("args.message is required");
     }
 
-    this.sink = sink
-    this.data = data
-    this.id = sink.id
-    this.type = 'submit'
-}
+    var message = args.message
 
-SubmitSinkHandler.prototype.handleEvent = handleEvent
-
-function handleEvent(ev) {
-    var target = ev.target
-
-    var isValid =
-        (ev.type === 'click' && target.tagName === 'BUTTON') ||
-        (
-            (target.type === 'text' || target.tagName === 'TEXTAREA') &&
-            (ev.keyCode === ENTER && !ev.shiftKey && ev.type === 'keydown')
-        )
-
-    if (!isValid) {
-        return
+    if (args.type && !args.name) {
+        var errorName = camelize(args.type) + "Error"
+        args.name = errorName[0].toUpperCase() + errorName.substr(1)
     }
 
-    var value = getFormData(ev.currentTarget)
-    var data = extend(value, this.data)
+    createError.type = args.type;
+    createError._name = args.name;
 
-    if (typeof this.sink === 'function') {
-        this.sink(data)
-    } else {
-        this.sink.write(data)
-    }
-}
+    return createError;
 
-},{"form-data-set/element":52,"xtend":55}],57:[function(require,module,exports){
-var extend = require('xtend')
-var getFormData = require('form-data-set/element')
+    function createError(opts) {
+        var result = new Error()
 
-module.exports = ValueEventHandler
+        Object.defineProperty(result, "type", {
+            value: result.type,
+            enumerable: true,
+            writable: true,
+            configurable: true
+        })
 
-function ValueEventHandler(sink, data) {
-    if (!(this instanceof ValueEventHandler)) {
-        return new ValueEventHandler(sink, data)
-    }
+        var options = extend({}, args, opts)
 
-    this.sink = sink
-    this.data = data
-    this.id = sink.id
-}
+        extend(result, options)
+        result.message = template(message, options)
 
-ValueEventHandler.prototype.handleEvent = handleEvent
-
-function handleEvent(ev) {
-    var value = getFormData(ev.currentTarget)
-    var data = extend(value, this.data)
-
-    if (typeof this.sink === 'function') {
-        this.sink(data)
-    } else {
-        this.sink.write(data)
+        return result
     }
 }
 
-},{"form-data-set/element":52,"xtend":55}],58:[function(require,module,exports){
-var createElement = require("virtual-dom/create-element")
-var diff = require("virtual-dom/diff")
-var patch = require("virtual-dom/patch")
 
-function copyOver(list, offset) {
-    var newList = []
-    for (var i = offset; i < list.length; i++) {
-        newList[i - offset] = list[i]
-    }
-    return newList
-}
-
-module.exports = partial
-
-function partial(fn) {
-    var args = copyOver(arguments, 1)
-    var firstArg = args[0]
-    var key
-
-    if (typeof firstArg === "object" && firstArg !== null) {
-        if ("key" in firstArg) {
-            key = firstArg.key
-        } else if ("id" in firstArg) {
-            key = firstArg.id
-        }
-    }
-
-    return new Thunk(fn, args, key)
-}
-
-function Thunk(fn, args, key) {
-    this.fn = fn
-    this.args = args
-    this.vnode = null
-    this.key = key
-}
-
-Thunk.prototype.type = "immutable-thunk"
-Thunk.prototype.update = update
-Thunk.prototype.init = init
-
-function shouldUpdate(current, previous) {
-    if (current.fn !== previous.fn) {
-        return true
-    }
-
-    var cargs = current.args
-    var pargs = previous.args
-
-    // fast case for args is zero case.
-    if (cargs.length === 0 && pargs.length === 0) {
-        return false
-    }
-
-    if (cargs.length !== pargs.length) {
-        return true
-    }
-
-    var max = cargs.length > pargs.length ? cargs.length : pargs.length
-
-    for (var i = 0; i < max; i++) {
-        if (cargs[i] !== pargs[i]) {
-            return true
-        }
-    }
-
-    return false
-}
-
-function update(previous, domNode) {
-    if (!shouldUpdate(this, previous)) {
-        this.vnode = previous.vnode
-        return
-    }
-
-    if (!this.vnode) {
-        this.vnode = this.fn.apply(null, this.args)
-    }
-
-    var patches = diff(previous.vnode, this.vnode)
-    patch(domNode, patches)
-}
-
-function init() {
-    this.vnode = this.fn.apply(null, this.args)
-    return createElement(this.vnode)
-}
-
-},{"virtual-dom/create-element":59,"virtual-dom/diff":60,"virtual-dom/patch":63}],59:[function(require,module,exports){
-var createElement = require("./vdom/create-element")
-
-module.exports = createElement
-
-},{"./vdom/create-element":65}],60:[function(require,module,exports){
-var diff = require("./vtree/diff")
-
-module.exports = diff
-
-},{"./vtree/diff":70}],61:[function(require,module,exports){
-module.exports = isObject
-
-function isObject(x) {
-    return typeof x === "object" && x !== null
-}
-
-},{}],62:[function(require,module,exports){
-var nativeIsArray = Array.isArray
-var toString = Object.prototype.toString
-
-module.exports = nativeIsArray || isArray
-
-function isArray(obj) {
-    return toString.call(obj) === "[object Array]"
-}
-
-},{}],63:[function(require,module,exports){
-var patch = require("./vdom/patch")
-
-module.exports = patch
-
-},{"./vdom/patch":68}],64:[function(require,module,exports){
+},{"camelize":36,"string-template":37,"xtend/mutable":38}],40:[function(require,module,exports){
 var isObject = require("is-object")
-
-var isHook = require("../vtree/is-vhook")
+var isHook = require("vtree/is-vhook")
 
 module.exports = applyProperties
 
@@ -3883,19 +3040,15 @@ function applyProperties(node, props, previous) {
     for (var propName in props) {
         var propValue = props[propName]
 
-        if (isHook(propValue)) {
+        if (propValue === undefined) {
+            removeProperty(node, props, previous, propName);
+        } else if (isHook(propValue)) {
             propValue.hook(node,
                 propName,
                 previous ? previous[propName] : undefined)
         } else {
             if (isObject(propValue)) {
-                if (!isObject(node[propName])) {
-                    node[propName] = {}
-                }
-
-                for (var k in propValue) {
-                    node[propName][k] = propValue[k]
-                }
+                patchObject(node, props, previous, propName, propValue);
             } else if (propValue !== undefined) {
                 node[propName] = propValue
             }
@@ -3903,20 +3056,95 @@ function applyProperties(node, props, previous) {
     }
 }
 
-},{"../vtree/is-vhook":71,"is-object":61}],65:[function(require,module,exports){
+function removeProperty(node, props, previous, propName) {
+    if (previous) {
+        var previousValue = previous[propName]
+
+        if (!isHook(previousValue)) {
+            if (propName === "attributes") {
+                for (var attrName in previousValue) {
+                    node.removeAttribute(attrName)
+                }
+            } else if (propName === "style") {
+                for (var i in previousValue) {
+                    node.style[i] = ""
+                }
+            } else if (typeof previousValue === "string") {
+                node[propName] = ""
+            } else {
+                node[propName] = null
+            }
+        } else if (previousValue && previousValue.unhook) {
+            previousValue.unhook(node,
+                propName,
+                previousValue)
+        }
+    }
+}
+
+function patchObject(node, props, previous, propName, propValue) {
+    var previousValue = previous ? previous[propName] : undefined
+
+    // Set attributes
+    if (propName === "attributes") {
+        for (var attrName in propValue) {
+            var attrValue = propValue[attrName]
+
+            if (attrValue === undefined) {
+                node.removeAttribute(attrName)
+            } else {
+                node.setAttribute(attrName, attrValue)
+            }
+        }
+
+        return
+    }
+
+    if(previousValue && isObject(previousValue) &&
+        getPrototype(previousValue) !== getPrototype(propValue)) {
+        node[propName] = propValue
+        return
+    }
+
+    if (!isObject(node[propName])) {
+        node[propName] = {}
+    }
+
+    var replacer = propName === "style" ? "" : undefined
+
+    for (var k in propValue) {
+        var value = propValue[k]
+        node[propName][k] = (value === undefined) ? replacer : value
+    }
+}
+
+function getPrototype(value) {
+    if (Object.getPrototypeOf) {
+        return Object.getPrototypeOf(value)
+    } else if (value.__proto__) {
+        return value.__proto__
+    } else if (value.constructor) {
+        return value.constructor.prototype
+    }
+}
+
+},{"is-object":44,"vtree/is-vhook":52}],41:[function(require,module,exports){
 var document = require("global/document")
 
 var applyProperties = require("./apply-properties")
 
-var isVNode = require("../vtree/is-vnode")
-var isVText = require("../vtree/is-vtext")
-var isWidget = require("../vtree/is-widget")
+var isVNode = require("vtree/is-vnode")
+var isVText = require("vtree/is-vtext")
+var isWidget = require("vtree/is-widget")
+var handleThunk = require("vtree/handle-thunk")
 
 module.exports = createElement
 
 function createElement(vnode, opts) {
     var doc = opts ? opts.document || document : document
     var warn = opts ? opts.warn : null
+
+    vnode = handleThunk(vnode).a
 
     if (isWidget(vnode)) {
         return vnode.init()
@@ -3948,7 +3176,7 @@ function createElement(vnode, opts) {
     return node
 }
 
-},{"../vtree/is-vnode":72,"../vtree/is-vtext":73,"../vtree/is-widget":74,"./apply-properties":64,"global/document":33}],66:[function(require,module,exports){
+},{"./apply-properties":40,"global/document":43,"vtree/handle-thunk":50,"vtree/is-vnode":53,"vtree/is-vtext":54,"vtree/is-widget":55}],42:[function(require,module,exports){
 // Maps a virtual DOM tree onto a real DOM tree in an efficient manner.
 // We don't want to read all of the DOM nodes in the tree so we use
 // the in-order tree indexing to eliminate recursion down certain branches.
@@ -4035,11 +3263,30 @@ function ascending(a, b) {
     return a > b ? 1 : -1
 }
 
-},{}],67:[function(require,module,exports){
+},{}],43:[function(require,module,exports){
+module.exports=require(33)
+},{"min-document":11}],44:[function(require,module,exports){
+module.exports = isObject
+
+function isObject(x) {
+    return typeof x === "object" && x !== null
+}
+
+},{}],45:[function(require,module,exports){
+var nativeIsArray = Array.isArray
+var toString = Object.prototype.toString
+
+module.exports = nativeIsArray || isArray
+
+function isArray(obj) {
+    return toString.call(obj) === "[object Array]"
+}
+
+},{}],46:[function(require,module,exports){
 var applyProperties = require("./apply-properties")
 
-var isWidget = require("../vtree/is-widget")
-var VPatch = require("../vtree/vpatch")
+var isWidget = require("vtree/is-widget")
+var VPatch = require("vtree/vpatch")
 
 var render = require("./create-element")
 var updateWidget = require("./update-widget")
@@ -4066,8 +3313,11 @@ function applyPatch(vpatch, domNode, renderOptions) {
             reorderChildren(domNode, patch)
             return domNode
         case VPatch.PROPS:
-            applyProperties(domNode, patch, vNode.propeties)
+            applyProperties(domNode, patch, vNode.properties)
             return domNode
+        case VPatch.THUNK:
+            return replaceRoot(domNode,
+                renderOptions.patch(domNode, patch, renderOptions))
         default:
             return domNode
     }
@@ -4156,31 +3406,65 @@ function reorderChildren(domNode, bIndex) {
     var childNodes = domNode.childNodes
     var len = childNodes.length
     var i
+    var reverseIndex = bIndex.reverse
 
     for (i = 0; i < len; i++) {
         children.push(domNode.childNodes[i])
     }
 
+    var insertOffset = 0
+    var move
+    var node
+    var insertNode
     for (i = 0; i < len; i++) {
-        var move = bIndex[i]
-        if (move !== undefined) {
-            var node = children[move]
-            domNode.removeChild(node)
-            domNode.insertBefore(node, childNodes[i])
+        move = bIndex[i]
+        if (move !== undefined && move !== i) {
+            // the element currently at this index will be moved later so increase the insert offset
+            if (reverseIndex[i] > i) {
+                insertOffset++
+            }
+
+            node = children[move]
+            insertNode = childNodes[i + insertOffset] || null
+            if (node !== insertNode) {
+                domNode.insertBefore(node, insertNode)
+            }
+
+            // the moved element came from the front of the array so reduce the insert offset
+            if (move < i) {
+                insertOffset--
+            }
+        }
+
+        // element at this index is scheduled to be removed so increase insert offset
+        if (i in bIndex.removes) {
+            insertOffset++
         }
     }
 }
 
-},{"../vtree/is-widget":74,"../vtree/vpatch":77,"./apply-properties":64,"./create-element":65,"./update-widget":69}],68:[function(require,module,exports){
+function replaceRoot(oldRoot, newRoot) {
+    if (oldRoot && newRoot && oldRoot !== newRoot && oldRoot.parentNode) {
+        console.log(oldRoot)
+        oldRoot.parentNode.replaceChild(newRoot, oldRoot)
+    }
+
+    return newRoot;
+}
+
+},{"./apply-properties":40,"./create-element":41,"./update-widget":48,"vtree/is-widget":55,"vtree/vpatch":59}],47:[function(require,module,exports){
 var document = require("global/document")
 var isArray = require("x-is-array")
 
 var domIndex = require("./dom-index")
 var patchOp = require("./patch-op")
-
 module.exports = patch
 
 function patch(rootNode, patches) {
+    return patchRecursive(rootNode, patches)
+}
+
+function patchRecursive(rootNode, patches, renderOptions) {
     var indices = patchIndices(patches)
 
     if (indices.length === 0) {
@@ -4189,11 +3473,11 @@ function patch(rootNode, patches) {
 
     var index = domIndex(rootNode, patches.a, indices)
     var ownerDocument = rootNode.ownerDocument
-    var renderOptions
 
-    if (ownerDocument !== document) {
-        renderOptions = {
-            document: ownerDocument
+    if (!renderOptions) {
+        renderOptions = { patch: patchRecursive }
+        if (ownerDocument !== document) {
+            renderOptions.document = ownerDocument
         }
     }
 
@@ -4246,15 +3530,15 @@ function patchIndices(patches) {
     return indices
 }
 
-},{"./dom-index":66,"./patch-op":67,"global/document":33,"x-is-array":62}],69:[function(require,module,exports){
-var isWidget = require("../vtree/is-widget")
+},{"./dom-index":42,"./patch-op":46,"global/document":43,"x-is-array":45}],48:[function(require,module,exports){
+var isWidget = require("vtree/is-widget")
 
 module.exports = updateWidget
 
 function updateWidget(a, b) {
     if (isWidget(a) && isWidget(b)) {
-        if ("type" in a && "type" in b) {
-            return a.type === b.type
+        if ("name" in a && "name" in b) {
+            return a.id === b.id
         } else {
             return a.init === b.init
         }
@@ -4263,7 +3547,7 @@ function updateWidget(a, b) {
     return false
 }
 
-},{"../vtree/is-widget":74}],70:[function(require,module,exports){
+},{"vtree/is-widget":55}],49:[function(require,module,exports){
 var isArray = require("x-is-array")
 var isObject = require("is-object")
 
@@ -4271,6 +3555,9 @@ var VPatch = require("./vpatch")
 var isVNode = require("./is-vnode")
 var isVText = require("./is-vtext")
 var isWidget = require("./is-widget")
+var isThunk = require("./is-thunk")
+var isHook = require("./is-vhook")
+var handleThunk = require("./handle-thunk")
 
 module.exports = diff
 
@@ -4282,16 +3569,33 @@ function diff(a, b) {
 
 function walk(a, b, patch, index) {
     if (a === b) {
-        hooks(b, patch, index)
         return
     }
 
     var apply = patch[index]
 
-    if (isWidget(b)) {
-        apply = appendPatch(apply, new VPatch(VPatch.WIDGET, a, b))
-
-        if (!isWidget(a)) {
+    if (b == null) {
+        apply = appendPatch(apply, new VPatch(VPatch.REMOVE, a, b))
+        destroyWidgets(a, patch, index)
+    } else if (isThunk(a) || isThunk(b)) {
+        thunks(a, b, patch, index)
+    } else if (isVNode(b)) {
+        if (isVNode(a)) {
+            if (a.tagName === b.tagName &&
+                a.namespace === b.namespace &&
+                a.key === b.key) {
+                var propsPatch = diffProps(a.properties, b.properties)
+                if (propsPatch) {
+                    apply = appendPatch(apply,
+                        new VPatch(VPatch.PROPS, a, propsPatch))
+                }
+                apply = diffChildren(a, b, patch, apply, index)
+            } else {
+                apply = appendPatch(apply, new VPatch(VPatch.VNODE, a, b))
+                destroyWidgets(a, patch, index)
+            }
+        } else {
+            apply = appendPatch(apply, new VPatch(VPatch.VNODE, a, b))
             destroyWidgets(a, patch, index)
         }
     } else if (isVText(b)) {
@@ -4301,29 +3605,12 @@ function walk(a, b, patch, index) {
         } else if (a.text !== b.text) {
             apply = appendPatch(apply, new VPatch(VPatch.VTEXT, a, b))
         }
-    } else if (isVNode(b)) {
-        if (isVNode(a)) {
-            if (a.tagName === b.tagName &&
-                a.namespace === b.namespace &&
-                a.key === b.key) {
-                var propsPatch = diffProps(a.properties, b.properties, b.hooks)
-                if (propsPatch) {
-                    apply = appendPatch(apply,
-                        new VPatch(VPatch.PROPS, a, propsPatch))
-                }
-            } else {
-                apply = appendPatch(apply, new VPatch(VPatch.VNODE, a, b))
-                destroyWidgets(a, patch, index)
-            }
+    } else if (isWidget(b)) {
+        apply = appendPatch(apply, new VPatch(VPatch.WIDGET, a, b))
 
-            apply = diffChildren(a, b, patch, apply, index)
-        } else {
-            apply = appendPatch(apply, new VPatch(VPatch.VNODE, a, b))
+        if (!isWidget(a)) {
             destroyWidgets(a, patch, index)
         }
-    } else if (b == null) {
-        apply = appendPatch(apply, new VPatch(VPatch.REMOVE, a, b))
-        destroyWidgets(a, patch, index)
     }
 
     if (apply) {
@@ -4331,36 +3618,35 @@ function walk(a, b, patch, index) {
     }
 }
 
-function diffProps(a, b, hooks) {
+function diffProps(a, b) {
     var diff
 
     for (var aKey in a) {
         if (!(aKey in b)) {
-            continue
+            diff = diff || {}
+            diff[aKey] = undefined
         }
 
         var aValue = a[aKey]
         var bValue = b[aKey]
 
-        if (hooks && aKey in hooks) {
-            diff = diff || {}
-            diff[aKey] = bValue
-        } else {
-            if (isObject(aValue) && isObject(bValue)) {
-                if (getPrototype(bValue) !== getPrototype(aValue)) {
-                    diff = diff || {}
-                    diff[aKey] = bValue
-                } else {
-                    var objectDiff = diffProps(aValue, bValue)
-                    if (objectDiff) {
-                        diff = diff || {}
-                        diff[aKey] = objectDiff
-                    }
-                }
-            } else if (aValue !== bValue && bValue !== undefined) {
+        if (isObject(aValue) && isObject(bValue)) {
+            if (getPrototype(bValue) !== getPrototype(aValue)) {
                 diff = diff || {}
                 diff[aKey] = bValue
+            } else if (isHook(bValue)) {
+                diff = diff || {}
+                diff[aKey] = bValue
+            } else {
+                var objectDiff = diffProps(aValue, bValue)
+                if (objectDiff) {
+                    diff = diff || {}
+                    diff[aKey] = objectDiff
+                }
             }
+        } else if (aValue !== bValue) {
+            diff = diff || {}
+            diff[aKey] = bValue
         }
     }
 
@@ -4400,7 +3686,8 @@ function diffChildren(a, b, patch, apply, index) {
         if (!leftNode) {
             if (rightNode) {
                 // Excess nodes in b need to be added
-                apply = appendPatch(apply, new VPatch(VPatch.INSERT, null, rightNode))
+                apply = appendPatch(apply,
+                    new VPatch(VPatch.INSERT, null, rightNode))
             }
         } else if (!rightNode) {
             if (leftNode) {
@@ -4448,28 +3735,23 @@ function destroyWidgets(vNode, patch, index) {
     }
 }
 
-// Execute hooks when two nodes are identical
-function hooks(vNode, patch, index) {
-    if (isVNode(vNode)) {
-        if (vNode.hooks) {
-            patch[index] = new VPatch(VPatch.PROPS, vNode.hooks, vNode.hooks)
-        }
+// Create a sub-patch for thunks
+function thunks(a, b, patch, index) {
+    var nodes = handleThunk(a, b);
+    var thunkPatch = diff(nodes.a, nodes.b)
+    if (hasPatches(thunkPatch)) {
+        patch[index] = new VPatch(VPatch.THUNK, null, thunkPatch)
+    }
+}
 
-        if (vNode.descendantHooks) {
-            var children = vNode.children
-            var len = children.length
-            for (var i = 0; i < len; i++) {
-                var child = children[i]
-                index += 1
-
-                hooks(child, patch, index)
-
-                if (isVNode(child) && child.count) {
-                    index += child.count
-                }
-            }
+function hasPatches(patch) {
+    for (var index in patch) {
+        if (index !== "a") {
+            return true;
         }
     }
+
+    return false;
 }
 
 // List diff, naive left to right reordering
@@ -4504,27 +3786,49 @@ function reorder(aChildren, bChildren) {
     var freeIndex = 0
     var i = 0
     var moveIndex = 0
-    var moves = shuffle.moves = {}
+    var moves = {}
+    var removes = moves.removes = {}
+    var reverse = moves.reverse = {}
+    var hasMoves = false
 
     while (freeIndex < len) {
         var move = aMatch[i]
         if (move !== undefined) {
             shuffle[i] = bChildren[move]
-            moves[move] = moveIndex++
+            if (move !== moveIndex) {
+                moves[move] = moveIndex
+                reverse[moveIndex] = move
+                hasMoves = true
+            }
+            moveIndex++
         } else if (i in aMatch) {
             shuffle[i] = undefined
+            removes[i] = moveIndex++
+            hasMoves = true
         } else {
             while (bMatch[freeIndex] !== undefined) {
                 freeIndex++
             }
 
             if (freeIndex < len) {
-                moves[freeIndex] = moveIndex++
-                shuffle[i] = bChildren[freeIndex]
+                var freeChild = bChildren[freeIndex]
+                if (freeChild) {
+                    shuffle[i] = freeChild
+                    if (freeIndex !== moveIndex) {
+                        hasMoves = true
+                        moves[freeIndex] = moveIndex
+                        reverse[moveIndex] = freeIndex
+                    }
+                    moveIndex++
+                }
                 freeIndex++
             }
         }
         i++
+    }
+
+    if (hasMoves) {
+        shuffle.moves = moves
     }
 
     return shuffle
@@ -4559,7 +3863,56 @@ function appendPatch(apply, patch) {
     }
 }
 
-},{"./is-vnode":72,"./is-vtext":73,"./is-widget":74,"./vpatch":77,"is-object":61,"x-is-array":62}],71:[function(require,module,exports){
+},{"./handle-thunk":50,"./is-thunk":51,"./is-vhook":52,"./is-vnode":53,"./is-vtext":54,"./is-widget":55,"./vpatch":59,"is-object":56,"x-is-array":57}],50:[function(require,module,exports){
+var isVNode = require("./is-vnode")
+var isVText = require("./is-vtext")
+var isWidget = require("./is-widget")
+var isThunk = require("./is-thunk")
+
+module.exports = handleThunk
+
+function handleThunk(a, b) {
+    var renderedA = a
+    var renderedB = b
+
+    if (isThunk(b)) {
+        renderedB = renderThunk(b, a)
+    }
+
+    if (isThunk(a)) {
+        renderedA = renderThunk(a, null)
+    }
+
+    return {
+        a: renderedA,
+        b: renderedB
+    }
+}
+
+function renderThunk(thunk, previous) {
+    var renderedThunk = thunk.vnode
+
+    if (!renderedThunk) {
+        renderedThunk = thunk.vnode = thunk.render(previous)
+    }
+
+    if (!(isVNode(renderedThunk) ||
+            isVText(renderedThunk) ||
+            isWidget(renderedThunk))) {
+        throw new Error("thunk did not return a valid node");
+    }
+
+    return renderedThunk
+}
+
+},{"./is-thunk":51,"./is-vnode":53,"./is-vtext":54,"./is-widget":55}],51:[function(require,module,exports){
+module.exports = isThunk
+
+function isThunk(t) {
+    return t && t.type === "Thunk"
+}
+
+},{}],52:[function(require,module,exports){
 module.exports = isHook
 
 function isHook(hook) {
@@ -4567,108 +3920,39 @@ function isHook(hook) {
         !hook.hasOwnProperty("hook")
 }
 
-},{}],72:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 var version = require("./version")
 
 module.exports = isVirtualNode
 
 function isVirtualNode(x) {
-    if (!x) {
-        return false;
-    }
-
-    return x.type === "VirtualNode" && x.version === version
+    return x && x.type === "VirtualNode" && x.version === version
 }
 
-},{"./version":75}],73:[function(require,module,exports){
+},{"./version":58}],54:[function(require,module,exports){
 var version = require("./version")
 
 module.exports = isVirtualText
 
 function isVirtualText(x) {
-    if (!x) {
-        return false;
-    }
-
-    return x.type === "VirtualText" && x.version === version
+    return x && x.type === "VirtualText" && x.version === version
 }
 
-},{"./version":75}],74:[function(require,module,exports){
+},{"./version":58}],55:[function(require,module,exports){
 module.exports = isWidget
 
 function isWidget(w) {
-    return w && typeof w.init === "function" && typeof w.update === "function"
+    return w && w.type === "Widget"
 }
 
-},{}],75:[function(require,module,exports){
+},{}],56:[function(require,module,exports){
+module.exports=require(44)
+},{}],57:[function(require,module,exports){
+module.exports=require(45)
+},{}],58:[function(require,module,exports){
 module.exports = "1"
 
-},{}],76:[function(require,module,exports){
-var version = require("./version")
-var isVNode = require("./is-vnode")
-var isWidget = require("./is-widget")
-var isVHook = require("./is-vhook")
-
-module.exports = VirtualNode
-
-var noProperties = {}
-var noChildren = []
-
-function VirtualNode(tagName, properties, children, key, namespace) {
-    this.tagName = tagName
-    this.properties = properties || noProperties
-    this.children = children || noChildren
-    this.key = key != null ? String(key) : undefined
-    this.namespace = (typeof namespace === "string") ? namespace : null
-
-    var count = (children && children.length) || 0
-    var descendants = 0
-    var hasWidgets = false
-    var descendantHooks = false
-    var hooks
-
-    for (var propName in properties) {
-        if (properties.hasOwnProperty(propName)) {
-            var property = properties[propName]
-            if (isVHook(property)) {
-                if (!hooks) {
-                    hooks = {}
-                }
-
-                hooks[propName] = property
-            }
-        }
-    }
-
-    for (var i = 0; i < count; i++) {
-        var child = children[i]
-        if (isVNode(child)) {
-            descendants += child.count || 0
-
-            if (!hasWidgets && child.hasWidgets) {
-                hasWidgets = true
-            }
-
-            if (!descendantHooks && (child.hooks || child.descendantHooks)) {
-                descendantHooks = true
-            }
-        } else if (!hasWidgets && isWidget(child)) {
-            if (typeof child.destroy === "function") {
-                hasWidgets = true
-            }
-        }
-    }
-
-    this.count = count + descendants
-    this.hasWidgets = hasWidgets
-    this.hooks = hooks
-    this.descendantHooks = descendantHooks
-}
-
-VirtualNode.prototype.version = version
-VirtualNode.prototype.type = "VirtualNode"
-
-},{"./is-vhook":71,"./is-vnode":72,"./is-widget":74,"./version":75}],77:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 var version = require("./version")
 
 VirtualPatch.NONE = 0
@@ -4679,6 +3963,7 @@ VirtualPatch.PROPS = 4
 VirtualPatch.ORDER = 5
 VirtualPatch.INSERT = 6
 VirtualPatch.REMOVE = 7
+VirtualPatch.THUNK = 8
 
 module.exports = VirtualPatch
 
@@ -4688,41 +3973,1793 @@ function VirtualPatch(type, vNode, patch) {
     this.patch = patch
 }
 
-VirtualPatch.prototype.version = version.split(".")
+VirtualPatch.prototype.version = version
 VirtualPatch.prototype.type = "VirtualPatch"
 
-},{"./version":75}],78:[function(require,module,exports){
-var version = require("./version")
+},{"./version":58}],60:[function(require,module,exports){
+(function (process){
+'use strict';
 
-module.exports = VirtualText
+var callable, byObserver;
 
-function VirtualText(text) {
-    this.text = String(text)
+callable = function (fn) {
+	if (typeof fn !== 'function') throw new TypeError(fn + " is not a function");
+	return fn;
+};
+
+byObserver = function (Observer) {
+	var node = document.createTextNode(''), queue, i = 0;
+	new Observer(function () {
+		var data;
+		if (!queue) return;
+		data = queue;
+		queue = null;
+		if (typeof data === 'function') {
+			data();
+			return;
+		}
+		data.forEach(function (fn) { fn(); });
+	}).observe(node, { characterData: true });
+	return function (fn) {
+		callable(fn);
+		if (queue) {
+			if (typeof queue === 'function') queue = [queue, fn];
+			else queue.push(fn);
+			return;
+		}
+		queue = fn;
+		node.data = (i = ++i % 2);
+	};
+};
+
+module.exports = (function () {
+	// Node.js
+	if ((typeof process !== 'undefined') && process &&
+			(typeof process.nextTick === 'function')) {
+		return process.nextTick;
+	}
+
+	// MutationObserver=
+	if ((typeof document === 'object') && document) {
+		if (typeof MutationObserver === 'function') {
+			return byObserver(MutationObserver);
+		}
+		if (typeof WebKitMutationObserver === 'function') {
+			return byObserver(WebKitMutationObserver);
+		}
+	}
+
+	// W3C Draft
+	// http://dvcs.w3.org/hg/webperf/raw-file/tip/specs/setImmediate/Overview.html
+	if (typeof setImmediate === 'function') {
+		return function (cb) { setImmediate(callable(cb)); };
+	}
+
+	// Wide available standard
+	if (typeof setTimeout === 'function') {
+		return function (cb) { setTimeout(callable(cb), 0); };
+	}
+
+	return null;
+}());
+
+}).call(this,require("g5I+bs"))
+},{"g5I+bs":74}],61:[function(require,module,exports){
+var setNonEnumerable = require("./lib/set-non-enumerable.js");
+
+module.exports = addListener
+
+function addListener(observArray, observ) {
+    var list = observArray._list
+
+    return observ(function (value) {
+        var valueList =  observArray().slice()
+        var index = list.indexOf(observ)
+
+        // This code path should never hit. If this happens
+        // there's a bug in the cleanup code
+        if (index === -1) {
+            var message = "observ-array: Unremoved observ listener"
+            var err = new Error(message)
+            err.list = list
+            err.index = index
+            err.observ = observ
+            throw err
+        }
+
+        valueList.splice(index, 1, value)
+        setNonEnumerable(valueList, "_diff", [ [index, 1, value] ])
+
+        observArray.set(valueList)
+    })
 }
 
-VirtualText.prototype.version = version
-VirtualText.prototype.type = "VirtualText"
+},{"./lib/set-non-enumerable.js":64}],62:[function(require,module,exports){
+var ObservArray = require("./index.js")
 
-},{"./version":75}],79:[function(require,module,exports){
-module.exports = AttributeHook;
+var slice = Array.prototype.slice
 
-function AttributeHook(value) {
-    if (!(this instanceof AttributeHook)) {
-        return new AttributeHook(value);
+var ARRAY_METHODS = [
+    "concat", "slice", "every", "filter", "forEach", "indexOf",
+    "join", "lastIndexOf", "map", "reduce", "reduceRight",
+    "some", "toString", "toLocaleString"
+]
+
+var methods = ARRAY_METHODS.map(function (name) {
+    return [name, function () {
+        var res = this._list[name].apply(this._list, arguments)
+
+        if (res && Array.isArray(res)) {
+            res = ObservArray(res)
+        }
+
+        return res
+    }]
+})
+
+module.exports = ArrayMethods
+
+function ArrayMethods(obs) {
+    obs.push = observArrayPush
+    obs.pop = observArrayPop
+    obs.shift = observArrayShift
+    obs.unshift = observArrayUnshift
+    obs.reverse = notImplemented
+    obs.sort = notImplemented
+
+    methods.forEach(function (tuple) {
+        obs[tuple[0]] = tuple[1]
+    })
+    return obs
+}
+
+
+
+function observArrayPush() {
+    var args = slice.call(arguments)
+    args.unshift(this._list.length, 0)
+    this.splice.apply(this, args)
+
+    return this._list.length
+}
+function observArrayPop() {
+    return this.splice(this._list.length - 1, 1)[0]
+}
+function observArrayShift() {
+    return this.splice(0, 1)[0]
+}
+function observArrayUnshift() {
+    var args = slice.call(arguments)
+    args.unshift(0, 0)
+    this.splice.apply(this, args)
+
+    return this._list.length
+}
+
+
+function notImplemented() {
+    throw new Error("Pull request welcome")
+}
+
+},{"./index.js":63}],63:[function(require,module,exports){
+var Observ = require("observ")
+
+// circular dep between ArrayMethods & this file
+module.exports = ObservArray
+
+var splice = require("./splice.js")
+var put = require("./put.js")
+var transaction = require("./transaction.js")
+var ArrayMethods = require("./array-methods.js")
+var addListener = require("./add-listener.js")
+
+
+/*  ObservArray := (Array<T>) => Observ<
+        Array<T> & { _diff: Array }
+    > & {
+        splice: (index: Number, amount: Number, rest...: T) =>
+            Array<T>,
+        push: (values...: T) => Number,
+        filter: (lambda: Function, thisValue: Any) => Array<T>,
+        indexOf: (item: T, fromIndex: Number) => Number
     }
 
-    this.value = value;
+    Fix to make it more like ObservHash.
+
+    I.e. you write observables into it. 
+        reading methods take plain JS objects to read
+        and the value of the array is always an array of plain
+        objsect.
+
+        The observ array instance itself would have indexed 
+        properties that are the observables
+*/
+function ObservArray(initialList) {
+    // list is the internal mutable list observ instances that
+    // all methods on `obs` dispatch to.
+    var list = initialList
+    var initialState = []
+
+    // copy state out of initialList into initialState
+    list.forEach(function (observ, index) {
+        initialState[index] = typeof observ === "function" ?
+            observ() : observ
+    })
+
+    var obs = Observ(initialState)
+    obs.splice = splice
+
+    obs.get = get
+    obs.getLength = getLength
+    obs.put = put
+    obs.transaction = transaction
+
+    // you better not mutate this list directly
+    // this is the list of observs instances
+    obs._list = list
+
+    var removeListeners = list.map(function (observ) {
+        return typeof observ === "function" ?
+            addListener(obs, observ) :
+            null
+    });
+    // this is a list of removal functions that must be called
+    // when observ instances are removed from `obs.list`
+    // not calling this means we do not GC our observ change
+    // listeners. Which causes rage bugs
+    obs._removeListeners = removeListeners
+
+    return ArrayMethods(obs, list)
 }
 
-AttributeHook.prototype.hook = function (node, prop, prev) {
-    if (prev && prev.value === this.value) {
+function get(index) {
+    return this._list[index]
+}
+
+function getLength() {
+    return this._list.length
+}
+
+},{"./add-listener.js":61,"./array-methods.js":62,"./put.js":66,"./splice.js":67,"./transaction.js":68,"observ":72}],64:[function(require,module,exports){
+module.exports = setNonEnumerable;
+
+function setNonEnumerable(object, key, value) {
+    Object.defineProperty(object, key, {
+        value: value,
+        writable: true,
+        configurable: true,
+        enumerable: false
+    });
+}
+
+},{}],65:[function(require,module,exports){
+function head (a) {
+  return a[0]
+}
+
+function last (a) {
+  return a[a.length - 1]
+}
+
+function tail(a) {
+  return a.slice(1)
+}
+
+function retreat (e) {
+  return e.pop()
+}
+
+function hasLength (e) {
+  return e.length
+}
+
+function any(ary, test) {
+  for(var i=0;i<ary.length;i++)
+    if(test(ary[i]))
+      return true
+  return false
+}
+
+function score (a) {
+  return a.reduce(function (s, a) {
+      return s + a.length + a[1] + 1
+  }, 0)
+}
+
+function best (a, b) {
+  return score(a) <= score(b) ? a : b
+}
+
+
+var _rules // set at the bottom  
+
+// note, naive implementation. will break on circular objects.
+
+function _equal(a, b) {
+  if(a && !b) return false
+  if(Array.isArray(a))
+    if(a.length != b.length) return false
+  if(a && 'object' == typeof a) {
+    for(var i in a)
+      if(!_equal(a[i], b[i])) return false
+    for(var i in b)
+      if(!_equal(a[i], b[i])) return false
+    return true
+  }
+  return a == b
+}
+
+function getArgs(args) {
+  return args.length == 1 ? args[0] : [].slice.call(args)
+}
+
+// return the index of the element not like the others, or -1
+function oddElement(ary, cmp) {
+  var c
+  function guess(a) {
+    var odd = -1
+    c = 0
+    for (var i = a; i < ary.length; i ++) {
+      if(!cmp(ary[a], ary[i])) {
+        odd = i, c++
+      }
+    }
+    return c > 1 ? -1 : odd
+  }
+  //assume that it is the first element.
+  var g = guess(0)
+  if(-1 != g) return g
+  //0 was the odd one, then all the other elements are equal
+  //else there more than one different element
+  guess(1)
+  return c == 0 ? 0 : -1
+}
+var exports = module.exports = function (deps, exports) {
+  var equal = (deps && deps.equal) || _equal
+  exports = exports || {} 
+  exports.lcs = 
+  function lcs() {
+    var cache = {}
+    var args = getArgs(arguments)
+    var a = args[0], b = args[1]
+
+    function key (a,b){
+      return a.length + ':' + b.length
+    }
+
+    //find length that matches at the head
+
+    if(args.length > 2) {
+      //if called with multiple sequences
+      //recurse, since lcs(a, b, c, d) == lcs(lcs(a,b), lcs(c,d))
+      args.push(lcs(args.shift(), args.shift()))
+      return lcs(args)
+    }
+    
+    //this would be improved by truncating input first
+    //and not returning an lcs as an intermediate step.
+    //untill that is a performance problem.
+
+    var start = 0, end = 0
+    for(var i = 0; i < a.length && i < b.length 
+      && equal(a[i], b[i])
+      ; i ++
+    )
+      start = i + 1
+
+    if(a.length === start)
+      return a.slice()
+
+    for(var i = 0;  i < a.length - start && i < b.length - start
+      && equal(a[a.length - 1 - i], b[b.length - 1 - i])
+      ; i ++
+    )
+      end = i
+
+    function recurse (a, b) {
+      if(!a.length || !b.length) return []
+      //avoid exponential time by caching the results
+      if(cache[key(a, b)]) return cache[key(a, b)]
+
+      if(equal(a[0], b[0]))
+        return [head(a)].concat(recurse(tail(a), tail(b)))
+      else { 
+        var _a = recurse(tail(a), b)
+        var _b = recurse(a, tail(b))
+        return cache[key(a,b)] = _a.length > _b.length ? _a : _b  
+      }
+    }
+    
+    var middleA = a.slice(start, a.length - end)
+    var middleB = b.slice(start, b.length - end)
+
+    return (
+      a.slice(0, start).concat(
+        recurse(middleA, middleB)
+      ).concat(a.slice(a.length - end))
+    )
+  }
+
+  // given n sequences, calc the lcs, and then chunk strings into stable and unstable sections.
+  // unstable chunks are passed to build
+  exports.chunk =
+  function (q, build) {
+    var q = q.map(function (e) { return e.slice() })
+    var lcs = exports.lcs.apply(null, q)
+    var all = [lcs].concat(q)
+
+    function matchLcs (e) {
+      if(e.length && !lcs.length || !e.length && lcs.length)
+        return false //incase the last item is null
+      return equal(last(e), last(lcs)) || ((e.length + lcs.length) === 0)
+    }
+
+    while(any(q, hasLength)) {
+      //if each element is at the lcs then this chunk is stable.
+      while(q.every(matchLcs) && q.every(hasLength))
+        all.forEach(retreat)
+      //collect the changes in each array upto the next match with the lcs
+      var c = false
+      var unstable = q.map(function (e) {
+        var change = []
+        while(!matchLcs(e)) {
+          change.unshift(retreat(e))
+          c = true
+        }
+        return change
+      })
+      if(c) build(q[0].length, unstable)
+    }
+  }
+
+  //calculate a diff this is only updates
+  exports.optimisticDiff =
+  function (a, b) {
+    var M = Math.max(a.length, b.length)
+    var m = Math.min(a.length, b.length)
+    var patch = []
+    for(var i = 0; i < M; i++)
+      if(a[i] !== b[i]) {
+        var cur = [i,0], deletes = 0
+        while(a[i] !== b[i] && i < m) {
+          cur[1] = ++deletes
+          cur.push(b[i++])
+        }
+        //the rest are deletes or inserts
+        if(i >= m) {
+          //the rest are deletes
+          if(a.length > b.length)
+            cur[1] += a.length - b.length
+          //the rest are inserts
+          else if(a.length < b.length)
+            cur = cur.concat(b.slice(a.length))
+        }
+        patch.push(cur)
+      }
+
+    return patch
+  }
+
+  exports.diff =
+  function (a, b) {
+    var optimistic = exports.optimisticDiff(a, b)
+    var changes = []
+    exports.chunk([a, b], function (index, unstable) {
+      var del = unstable.shift().length
+      var insert = unstable.shift()
+      changes.push([index, del].concat(insert))
+    })
+    return best(optimistic, changes)
+  }
+
+  exports.patch = function (a, changes, mutate) {
+    if(mutate !== true) a = a.slice(a)//copy a
+    changes.forEach(function (change) {
+      [].splice.apply(a, change)
+    })
+    return a
+  }
+
+  // http://en.wikipedia.org/wiki/Concestor
+  // me, concestor, you...
+  exports.merge = function () {
+    var args = getArgs(arguments)
+    var patch = exports.diff3(args)
+    return exports.patch(args[0], patch)
+  }
+
+  exports.diff3 = function () {
+    var args = getArgs(arguments)
+    var r = []
+    exports.chunk(args, function (index, unstable) {
+      var mine = unstable[0]
+      var insert = resolve(unstable)
+      if(equal(mine, insert)) return 
+      r.push([index, mine.length].concat(insert)) 
+    })
+    return r
+  }
+  exports.oddOneOut =
+    function oddOneOut (changes) {
+      changes = changes.slice()
+      //put the concestor first
+      changes.unshift(changes.splice(1,1)[0])
+      var i = oddElement(changes, equal)
+      if(i == 0) // concestor was different, 'false conflict'
+        return changes[1]
+      if (~i)
+        return changes[i] 
+    }
+  exports.insertMergeOverDelete = 
+    //i've implemented this as a seperate rule,
+    //because I had second thoughts about this.
+    function insertMergeOverDelete (changes) {
+      changes = changes.slice()
+      changes.splice(1,1)// remove concestor
+      
+      //if there is only one non empty change thats okay.
+      //else full confilct
+      for (var i = 0, nonempty; i < changes.length; i++)
+        if(changes[i].length) 
+          if(!nonempty) nonempty = changes[i]
+          else return // full conflict
+      return nonempty
+    }
+
+  var rules = (deps && deps.rules) || [exports.oddOneOut, exports.insertMergeOverDelete]
+
+  function resolve (changes) {
+    var l = rules.length
+    for (var i in rules) { // first
+      
+      var c = rules[i] && rules[i](changes)
+      if(c) return c
+    }
+    changes.splice(1,1) // remove concestor
+    //returning the conflicts as an object is a really bad idea,
+    // because == will not detect they are the same. and conflicts build.
+    // better to use
+    // '<<<<<<<<<<<<<'
+    // of course, i wrote this before i started on snob, so i didn't know that then.
+    /*var conflict = ['>>>>>>>>>>>>>>>>']
+    while(changes.length)
+      conflict = conflict.concat(changes.shift()).concat('============')
+    conflict.pop()
+    conflict.push          ('<<<<<<<<<<<<<<<')
+    changes.unshift       ('>>>>>>>>>>>>>>>')
+    return conflict*/
+    //nah, better is just to use an equal can handle objects
+    return {'?': changes}
+  }
+  return exports
+}
+exports(null, exports)
+
+},{}],66:[function(require,module,exports){
+var addListener = require("./add-listener.js")
+var setNonEnumerable = require("./lib/set-non-enumerable.js");
+
+module.exports = put
+
+// `obs.put` is a mutable implementation of `array[index] = value`
+// that mutates both `list` and the internal `valueList` that
+// is the current value of `obs` itself
+function put(index, value) {
+    var obs = this
+    var valueList = obs().slice()
+
+    var originalLength = valueList.length
+    valueList[index] = typeof value === "function" ? value() : value
+
+    obs._list[index] = value
+
+    // remove past value listener if was observ
+    var removeListener = obs._removeListeners[index]
+    if (removeListener){
+        removeListener()
+    }
+
+    // add listener to value if observ
+    obs._removeListeners[index] = typeof value === "function" ?
+        addListener(obs, value) :
+        null
+
+    // fake splice diff
+    var valueArgs = index < originalLength ? 
+        [index, 1, valueList[index]] :
+        [index, 0, valueList[index]]
+
+    setNonEnumerable(valueList, "_diff", [valueArgs])
+
+    obs.set(valueList)
+    return value
+}
+},{"./add-listener.js":61,"./lib/set-non-enumerable.js":64}],67:[function(require,module,exports){
+var slice = Array.prototype.slice
+
+var addListener = require("./add-listener.js")
+var setNonEnumerable = require("./lib/set-non-enumerable.js");
+
+module.exports = splice
+
+// `obs.splice` is a mutable implementation of `splice()`
+// that mutates both `list` and the internal `valueList` that
+// is the current value of `obs` itself
+function splice(index, amount) {
+    var obs = this
+    var args = slice.call(arguments, 0)
+    var valueList = obs().slice()
+
+    // generate a list of args to mutate the internal
+    // list of only obs
+    var valueArgs = args.map(function (value, index) {
+        if (index === 0 || index === 1) {
+            return value
+        }
+
+        // must unpack observables that we are adding
+        return typeof value === "function" ? value() : value
+    })
+
+    valueList.splice.apply(valueList, valueArgs)
+    // we remove the observs that we remove
+    var removed = obs._list.splice.apply(obs._list, args)
+
+    var extraRemoveListeners = args.slice(2).map(function (observ) {
+        return typeof observ === "function" ?
+            addListener(obs, observ) :
+            null
+    })
+    extraRemoveListeners.unshift(args[0], args[1])
+    var removedListeners = obs._removeListeners.splice
+        .apply(obs._removeListeners, extraRemoveListeners)
+
+    removedListeners.forEach(function (removeObservListener) {
+        if (removeObservListener) {
+            removeObservListener()
+        }
+    })
+
+    setNonEnumerable(valueList, "_diff", [valueArgs])
+
+    obs.set(valueList)
+    return removed
+}
+
+},{"./add-listener.js":61,"./lib/set-non-enumerable.js":64}],68:[function(require,module,exports){
+var addListener = require("./add-listener.js")
+var setNonEnumerable = require("./lib/set-non-enumerable.js")
+var adiff = require("adiff")
+
+module.exports = transaction
+
+function transaction (func) {
+    var obs = this
+    var rawList = obs._list.slice()
+
+    if (func(rawList) !== false){ // allow cancel
+
+        var changes = adiff.diff(obs._list, rawList)
+        var valueList = obs().slice()
+
+        var valueChanges = changes.map(applyPatch.bind(obs, valueList))
+
+        setNonEnumerable(valueList, "_diff", valueChanges)
+
+        obs.set(valueList)
+        return changes
+    }
+
+}
+
+function applyPatch (valueList, args) {
+    var obs = this
+    var valueArgs = args.map(unpack)
+
+    valueList.splice.apply(valueList, valueArgs)
+    obs._list.splice.apply(obs._list, args)
+
+    var extraRemoveListeners = args.slice(2).map(function (observ) {
+        return typeof observ === "function" ?
+            addListener(obs, observ) :
+            null
+    })
+
+    extraRemoveListeners.unshift(args[0], args[1])
+    var removedListeners = obs._removeListeners.splice
+        .apply(obs._removeListeners, extraRemoveListeners)
+
+    removedListeners.forEach(function (removeObservListener) {
+        if (removeObservListener) {
+            removeObservListener()
+        }
+    })
+
+    return valueArgs
+}
+
+function unpack(value, index){
+    if (index === 0 || index === 1) {
+        return value
+    }
+    return typeof value === "function" ? value() : value
+}
+},{"./add-listener.js":61,"./lib/set-non-enumerable.js":64,"adiff":65}],69:[function(require,module,exports){
+var Observ = require("observ")
+var extend = require("xtend")
+
+var blackList = ["name", "_diff", "_type", "_version"]
+var blackListReasons = {
+    "name": "Clashes with `Function.prototype.name`.\n",
+    "_diff": "_diff is reserved key of observ-struct.\n",
+    "_type": "_type is reserved key of observ-struct.\n",
+    "_version": "_version is reserved key of observ-struct.\n"
+}
+var NO_TRANSACTION = {}
+
+function setNonEnumerable(object, key, value) {
+    Object.defineProperty(object, key, {
+        value: value,
+        writable: true,
+        configurable: true,
+        enumerable: false
+    })
+}
+
+/* ObservStruct := (Object<String, Observ<T>>) => 
+    Object<String, Observ<T>> &
+        Observ<Object<String, T> & {
+            _diff: Object<String, Any>
+        }>
+
+*/
+module.exports = ObservStruct
+
+function ObservStruct(struct) {
+    var keys = Object.keys(struct)
+
+    var initialState = {}
+    var currentTransaction = NO_TRANSACTION
+    var nestedTransaction = NO_TRANSACTION
+
+    keys.forEach(function (key) {
+        if (blackList.indexOf(key) !== -1) {
+            throw new Error("cannot create an observ-struct " +
+                "with a key named '" + key + "'.\n" +
+                blackListReasons[key]);
+        }
+
+        var observ = struct[key]
+        initialState[key] = typeof observ === "function" ?
+            observ() : observ
+    })
+
+    var obs = Observ(initialState)
+    keys.forEach(function (key) {
+        var observ = struct[key]
+        obs[key] = observ
+
+        if (typeof observ === "function") {
+            observ(function (value) {
+                if (nestedTransaction === value) {
+                    return
+                }
+
+                var state = extend(obs())
+                state[key] = value
+                var diff = {}
+                diff[key] = value && value._diff ?
+                    value._diff : value
+
+                setNonEnumerable(state, "_diff", diff)
+                currentTransaction = state
+                obs.set(state)
+                currentTransaction = NO_TRANSACTION
+            })
+        }
+    })
+    var _set = obs.set
+    obs.set = function trackDiff(value) {
+        if (currentTransaction === value) {
+            return _set(value)
+        }
+
+        var newState = extend(value)
+        setNonEnumerable(newState, "_diff", value)
+        _set(newState)
+    }
+
+    obs(function (newState) {
+        if (currentTransaction === newState) {
+            return
+        }
+
+        keys.forEach(function (key) {
+            var observ = struct[key]
+            var newObservValue = newState[key]
+
+            if (typeof observ === "function" &&
+                observ() !== newObservValue
+            ) {
+                nestedTransaction = newObservValue
+                observ.set(newState[key])
+                nestedTransaction = NO_TRANSACTION
+            }
+        })
+    })
+
+    obs._type = "observ-struct"
+    obs._version = "5"
+
+    return obs
+}
+
+},{"observ":72,"xtend":140}],70:[function(require,module,exports){
+var Observ = require('observ')
+var extend = require('xtend')
+
+var NO_TRANSACTION = {}
+
+module.exports = ObservVarhash
+
+function ObservVarhash (hash, createValue) {
+  createValue = createValue || function (obj) { return obj }
+
+  var initialState = {}
+  var currentTransaction = NO_TRANSACTION
+
+  var obs = Observ()
+  setNonEnumerable(obs, '_removeListeners', {});
+  var key
+
+  for (key in hash) {
+    obs[key] = typeof hash[key] === 'function' ?
+      hash[key] : createValue(hash[key], key)
+
+    if (isFn(obs[key])) {
+      obs._removeListeners[key] = obs[key](watch(obs, key, currentTransaction))
+    }
+  }
+
+  for (key in hash) {
+    var observ = obs[key]
+    checkKey(key)
+    initialState[key] = isFn(observ) ? observ() : observ
+  }
+
+  currentTransaction = initialState
+  obs.set(initialState)
+  currentTransaction = NO_TRANSACTION
+
+
+  setNonEnumerable(obs, 'set', obs.set)
+  setNonEnumerable(obs, 'get', get.bind(obs))
+  setNonEnumerable(obs, 'put', put.bind(obs, createValue))
+  setNonEnumerable(obs, 'delete', del.bind(obs))
+
+
+  obs(function (newState) {
+    if (currentTransaction === newState) {
+      return
+    }
+
+    for (var key in hash) {
+      var observ = hash[key]
+
+      if (isFn(observ) && observ() !== newState[key]) {
+        observ.set(newState[key])
+      }
+    }
+  })
+
+  return obs
+}
+
+// access and mutate
+function get (key) {
+  return this[key]
+}
+
+function put (createValue, key, val) {
+  checkKey(key)
+  
+  if (val === undefined) {
+    throw new Error('cannot varhash.put(key, undefined).')
+  }
+
+  var observ = typeof observ === 'function' ?
+    createValue(val, key) : val
+  var state = extend(this())
+
+  state[key] = isFn(observ) ? observ() : observ
+
+  if (isFn(this._removeListeners[key])) {
+    this._removeListeners[key]()
+  }
+
+  this._removeListeners[key] = isFn(observ) ?
+    observ(watch(this, key)) : null
+
+  setNonEnumerable(state, '_diff', diff(key, state[key]))
+
+  this[key] = observ
+  this.set(state)
+
+  return this
+}
+
+function del (key) {
+  var state = extend(this())
+  if (isFn(this._removeListeners[key])) {
+    this._removeListeners[key]()
+  }
+
+  delete this._removeListeners[key]
+  delete state[key]
+  delete this[key]
+
+  setNonEnumerable(state, '_diff', diff(key, undefined))
+  this.set(state)
+
+  return this
+}
+
+// processing
+function watch (obs, key, currentTransaction) {
+  return function (value) {
+    var state = extend(obs())
+    state[key] = value
+
+    setNonEnumerable(state, '_diff', diff(key, value))
+    currentTransaction = state
+    obs.set(state)
+    currentTransaction = NO_TRANSACTION
+  }
+}
+
+function diff (key, value) {
+  var obj = {}
+  obj[key] = value && value._diff ? value._diff : value
+  return obj
+}
+
+function isFn (obj) {
+  return typeof obj === 'function'
+}
+
+function setNonEnumerable(object, key, value) {
+  Object.defineProperty(object, key, {
+    value: value,
+    writable: true,
+    configurable: true,
+    enumerable: false
+  })
+}
+
+// errors
+var blacklist = {
+  name: 'Clashes with `Function.prototype.name`.',
+  get: 'get is a reserved key of observ-varhash method',
+  put: 'put is a reserved key of observ-varhash method',
+  delete: 'delete is a reserved key of observ-varhash method',
+  _diff: '_diff is a reserved key of observ-varhash method',
+  _removeListeners: '_removeListeners is a reserved key of observ-varhash'
+}
+
+function checkKey (key) {
+  if (!blacklist[key]) return
+  throw new Error(
+    'cannot create an observ-varhash with key `' + key + '`. ' + blacklist[key]
+  )
+}
+
+},{"observ":72,"xtend":140}],71:[function(require,module,exports){
+var Observable = require("./index.js")
+
+module.exports = computed
+
+function computed(observables, lambda) {
+    var values = observables.map(function (o) {
+        return o()
+    })
+    var result = Observable(lambda.apply(null, values))
+
+    observables.forEach(function (o, index) {
+        o(function (newValue) {
+            values[index] = newValue
+            result.set(lambda.apply(null, values))
+        })
+    })
+
+    return result
+}
+
+},{"./index.js":72}],72:[function(require,module,exports){
+module.exports = Observable
+
+function Observable(value) {
+    var listeners = []
+    value = value === undefined ? null : value
+
+    observable.set = function (v) {
+        value = v
+        listeners.forEach(function (f) {
+            f(v)
+        })
+    }
+
+    return observable
+
+    function observable(listener) {
+        if (!listener) {
+            return value
+        }
+
+        listeners.push(listener)
+
+        return function remove() {
+            listeners.splice(listeners.indexOf(listener), 1)
+        }
+    }
+}
+
+},{}],73:[function(require,module,exports){
+module.exports = watch
+
+function watch(observable, listener) {
+    var remove = observable(listener)
+    listener(observable())
+    return remove
+}
+
+},{}],74:[function(require,module,exports){
+// shim for using process in browser
+
+var process = module.exports = {};
+
+process.nextTick = (function () {
+    var canSetImmediate = typeof window !== 'undefined'
+    && window.setImmediate;
+    var canPost = typeof window !== 'undefined'
+    && window.postMessage && window.addEventListener
+    ;
+
+    if (canSetImmediate) {
+        return function (f) { return window.setImmediate(f) };
+    }
+
+    if (canPost) {
+        var queue = [];
+        window.addEventListener('message', function (ev) {
+            var source = ev.source;
+            if ((source === window || source === null) && ev.data === 'process-tick') {
+                ev.stopPropagation();
+                if (queue.length > 0) {
+                    var fn = queue.shift();
+                    fn();
+                }
+            }
+        }, true);
+
+        return function nextTick(fn) {
+            queue.push(fn);
+            window.postMessage('process-tick', '*');
+        };
+    }
+
+    return function nextTick(fn) {
+        setTimeout(fn, 0);
+    };
+})();
+
+process.title = 'browser';
+process.browser = true;
+process.env = {};
+process.argv = [];
+
+function noop() {}
+
+process.on = noop;
+process.addListener = noop;
+process.once = noop;
+process.off = noop;
+process.removeListener = noop;
+process.removeAllListeners = noop;
+process.emit = noop;
+
+process.binding = function (name) {
+    throw new Error('process.binding is not supported');
+}
+
+// TODO(shtylman)
+process.cwd = function () { return '/' };
+process.chdir = function (dir) {
+    throw new Error('process.chdir is not supported');
+};
+
+},{}],75:[function(require,module,exports){
+var now = require('performance-now')
+  , global = typeof window === 'undefined' ? {} : window
+  , vendors = ['moz', 'webkit']
+  , suffix = 'AnimationFrame'
+  , raf = global['request' + suffix]
+  , caf = global['cancel' + suffix] || global['cancelRequest' + suffix]
+  , isNative = true
+
+for(var i = 0; i < vendors.length && !raf; i++) {
+  raf = global[vendors[i] + 'Request' + suffix]
+  caf = global[vendors[i] + 'Cancel' + suffix]
+      || global[vendors[i] + 'CancelRequest' + suffix]
+}
+
+// Some versions of FF have rAF but not cAF
+if(!raf || !caf) {
+  isNative = false
+
+  var last = 0
+    , id = 0
+    , queue = []
+    , frameDuration = 1000 / 60
+
+  raf = function(callback) {
+    if(queue.length === 0) {
+      var _now = now()
+        , next = Math.max(0, frameDuration - (_now - last))
+      last = next + _now
+      setTimeout(function() {
+        var cp = queue.slice(0)
+        // Clear queue here to prevent
+        // callbacks from appending listeners
+        // to the current frame's queue
+        queue.length = 0
+        for(var i = 0; i < cp.length; i++) {
+          if(!cp[i].cancelled) {
+            try{
+              cp[i].callback(last)
+            } catch(e) {
+              setTimeout(function() { throw e }, 0)
+            }
+          }
+        }
+      }, Math.round(next))
+    }
+    queue.push({
+      handle: ++id,
+      callback: callback,
+      cancelled: false
+    })
+    return id
+  }
+
+  caf = function(handle) {
+    for(var i = 0; i < queue.length; i++) {
+      if(queue[i].handle === handle) {
+        queue[i].cancelled = true
+      }
+    }
+  }
+}
+
+module.exports = function(fn) {
+  // Wrap in a new function to prevent
+  // `cancel` potentially being assigned
+  // to the native rAF function
+  if(!isNative) {
+    return raf.call(global, fn)
+  }
+  return raf.call(global, function() {
+    try{
+      fn.apply(this, arguments)
+    } catch(e) {
+      setTimeout(function() { throw e }, 0)
+    }
+  })
+}
+module.exports.cancel = function() {
+  caf.apply(global, arguments)
+}
+
+},{"performance-now":76}],76:[function(require,module,exports){
+(function (process){
+// Generated by CoffeeScript 1.6.3
+(function() {
+  var getNanoSeconds, hrtime, loadTime;
+
+  if ((typeof performance !== "undefined" && performance !== null) && performance.now) {
+    module.exports = function() {
+      return performance.now();
+    };
+  } else if ((typeof process !== "undefined" && process !== null) && process.hrtime) {
+    module.exports = function() {
+      return (getNanoSeconds() - loadTime) / 1e6;
+    };
+    hrtime = process.hrtime;
+    getNanoSeconds = function() {
+      var hr;
+      hr = hrtime();
+      return hr[0] * 1e9 + hr[1];
+    };
+    loadTime = getNanoSeconds();
+  } else if (Date.now) {
+    module.exports = function() {
+      return Date.now() - loadTime;
+    };
+    loadTime = Date.now();
+  } else {
+    module.exports = function() {
+      return new Date().getTime() - loadTime;
+    };
+    loadTime = new Date().getTime();
+  }
+
+}).call(this);
+
+/*
+//@ sourceMappingURL=performance-now.map
+*/
+
+}).call(this,require("g5I+bs"))
+},{"g5I+bs":74}],77:[function(require,module,exports){
+var parseUrl = require("url").parse;
+var parseQS = require("querystring").parse;
+var pathToRegexp = require("path-to-regexp");
+
+module.exports = routeMap;
+
+function routeMap (routes) {
+  var map = {};
+
+  var pattern, keys;
+  for (pattern in routes) {
+    keys = [];
+    map[pattern] = {
+      keys: keys,
+      exp: pathToRegexp(pattern, keys)
+    };
+  }
+
+  return match;
+
+  function match (fullUrl) {
+    var url = parseUrl(fullUrl);
+    var result = {
+      url: fullUrl,
+      hash: url.hash,
+      qs: url.query,
+      params: {},
+      keys: keys
+    };
+
+    var pattern, match, i;
+    for (pattern in map) {
+      match = url.pathname.match(map[pattern].exp);
+
+      if (!match) continue;
+
+      result.pattern = pattern;
+      result.fn = routes[pattern];
+      result.keys = map[pattern].keys;
+
+      if (result.qs) {
+        result.qs = parseQS(result.qs);
+      }
+
+      i = map[pattern].keys.length;
+      while (i--) {
+        result.params[ map[pattern].keys[i].name ] = match[i+1];
+      }
+
+      return result;
+    }
+
+}
+
+}
+
+},{"path-to-regexp":78,"querystring":15,"url":16}],78:[function(require,module,exports){
+/**
+ * Expose `pathtoRegexp`.
+ */
+
+module.exports = pathtoRegexp;
+
+/**
+ * Normalize the given path string,
+ * returning a regular expression.
+ *
+ * An empty array should be passed,
+ * which will contain the placeholder
+ * key names. For example "/user/:id" will
+ * then contain ["id"].
+ *
+ * @param  {String|RegExp|Array} path
+ * @param  {Array} keys
+ * @param  {Object} options
+ * @return {RegExp}
+ * @api private
+ */
+
+function pathtoRegexp(path, keys, options) {
+  options = options || {};
+  var sensitive = options.sensitive;
+  var strict = options.strict;
+  keys = keys || [];
+
+  if (path instanceof RegExp) return path;
+  if (path instanceof Array) path = '(' + path.join('|') + ')';
+
+  path = path
+    .concat(strict ? '' : '/?')
+    .replace(/\/\(/g, '(?:/')
+    .replace(/(\/)?(\.)?:(\w+)(?:(\(.*?\)))?(\?)?(\*)?/g, function(_, slash, format, key, capture, optional, star){
+      keys.push({ name: key, optional: !! optional });
+      slash = slash || '';
+      return ''
+        + (optional ? '' : slash)
+        + '(?:'
+        + (optional ? slash : '')
+        + (format || '') + (capture || (format && '([^/.]+?)' || '([^/]+?)')) + ')'
+        + (optional || '')
+        + (star ? '(/*)?' : '');
+    })
+    .replace(/([\/.])/g, '\\$1')
+    .replace(/\*/g, '(.*)');
+
+  return new RegExp('^' + path + '$', sensitive ? '' : 'i');
+};
+
+},{}],79:[function(require,module,exports){
+var Delegator = require('dom-delegator')
+
+module.exports = BaseEvent
+
+function BaseEvent(lambda) {
+    return EventHandler;
+
+    function EventHandler(fn, data, opts) {
+        var handler = {
+            fn: fn,
+            data: data || {},
+            opts: opts || {},
+            handleEvent: handleEvent
+        }
+
+        if (fn && fn.type === 'dom-delegator-handle') {
+            return Delegator.transformHandle(fn,
+                handleLambda.bind(handler))
+        }
+
+        return handler;
+    }
+
+    function handleLambda(ev, broadcast) {
+        return lambda.call(this, ev, broadcast)
+    }
+
+    function handleEvent(ev) {
+        var self = this
+        lambda.call(self, ev, broadcast)
+
+        function broadcast(value) {
+            if (typeof self.fn === 'function') {
+                self.fn(value)
+            } else {
+                self.fn.write(value)
+            }
+        }
+    }
+}
+
+},{"dom-delegator":20}],80:[function(require,module,exports){
+var extend = require('xtend')
+var getFormData = require('form-data-set/element')
+
+var BaseEvent = require('./base-event.js')
+
+var VALID_CHANGE = ['checkbox', 'file'];
+var VALID_INPUT = ['color', 'date', 'datetime', 'datetime-local', 'email',
+    'month', 'number', 'password', 'range', 'search', 'tel', 'text', 'time',
+    'url', 'week'];
+
+module.exports = BaseEvent(changeLambda);
+
+function changeLambda(ev, broadcast) {
+    var target = ev.target
+
+    var isValid =
+        (ev.type === 'input' && VALID_INPUT.indexOf(target.type) !== -1) ||
+        (ev.type === 'change' && VALID_CHANGE.indexOf(target.type) !== -1);
+
+    if (!isValid) {
+        if (ev.startPropagation) {
+            ev.startPropagation()
+        }
+        return
+    }
+
+    var value = getFormData(ev.currentTarget)
+    var data = extend(value, this.data)
+
+    broadcast(data)
+}
+
+},{"./base-event.js":79,"form-data-set/element":85,"xtend":88}],81:[function(require,module,exports){
+var BaseEvent = require('./base-event.js');
+
+module.exports = BaseEvent(clickLambda);
+
+function clickLambda(ev, broadcast) {
+    var opts = this.opts;
+
+    if (!opts.ctrl && ev.ctrlKey) {
         return;
     }
 
-    node.setAttributeNS(null, prop, this.value)
+    if (!opts.meta && ev.metaKey) {
+        return;
+    }
+
+    if (!opts.rightClick && ev.which === 2) {
+        return;
+    }
+
+    if (this.opts.preventDefault && ev.preventDefault) {
+        ev.preventDefault();
+    }
+
+    broadcast(this.data);
 }
 
-},{}],80:[function(require,module,exports){
+},{"./base-event.js":79}],82:[function(require,module,exports){
+var BaseEvent = require('./base-event.js');
+
+module.exports = BaseEvent(eventLambda);
+
+function eventLambda(ev, broadcast) {
+    broadcast(this.data);
+}
+
+},{"./base-event.js":79}],83:[function(require,module,exports){
+var BaseEvent = require('./base-event.js');
+
+module.exports = BaseEvent(keyLambda);
+
+function keyLambda(ev, broadcast) {
+    var key = this.opts.key;
+
+    if (ev.keyCode === key) {
+        broadcast(this.data);
+    }
+}
+
+},{"./base-event.js":79}],84:[function(require,module,exports){
+var slice = Array.prototype.slice
+
+module.exports = iterativelyWalk
+
+function iterativelyWalk(nodes, cb) {
+    if (!('length' in nodes)) {
+        nodes = [nodes]
+    }
+    
+    nodes = slice.call(nodes)
+
+    while(nodes.length) {
+        var node = nodes.shift(),
+            ret = cb(node)
+
+        if (ret) {
+            return ret
+        }
+
+        if (node.childNodes && node.childNodes.length) {
+            nodes = slice.call(node.childNodes).concat(nodes)
+        }
+    }
+}
+
+},{}],85:[function(require,module,exports){
+var walk = require('dom-walk')
+
+var FormData = require('./index.js')
+
+module.exports = getFormData
+
+function buildElems(rootElem) {
+    var hash = {}
+
+    walk(rootElem, function (child) {
+        if (child.name) {
+            hash[child.name] = child
+        }
+    })
+
+
+    return hash
+}
+
+function getFormData(rootElem) {
+    var elements = buildElems(rootElem)
+
+    return FormData(elements)
+}
+
+},{"./index.js":86,"dom-walk":84}],86:[function(require,module,exports){
+/*jshint maxcomplexity: 10*/
+
+module.exports = FormData
+
+//TODO: Massive spec: http://www.whatwg.org/specs/web-apps/current-work/multipage/association-of-controls-and-forms.html#constructing-form-data-set
+function FormData(elements) {
+    return Object.keys(elements).reduce(function (acc, key) {
+        var elem = elements[key]
+
+        acc[key] = valueOfElement(elem)
+
+        return acc
+    }, {})
+}
+
+function valueOfElement(elem) {
+    if (typeof elem === "function") {
+        return elem()
+    } else if (containsRadio(elem)) {
+        var elems = toList(elem)
+        var checked = elems.filter(function (elem) {
+            return elem.checked
+        })[0] || null
+
+        return checked ? checked.value : null
+    } else if (Array.isArray(elem)) {
+        return elem.map(valueOfElement).filter(filterNull)
+    } else if (elem.tagName === undefined && elem.nodeType === undefined) {
+        return FormData(elem)
+    } else if (elem.tagName === "INPUT" && isChecked(elem)) {
+        if (elem.hasAttribute("value")) {
+            return elem.checked ? elem.value : null
+        } else {
+            return elem.checked
+        }
+    } else if (elem.tagName === "INPUT") {
+        return elem.value
+    } else if (elem.tagName === "TEXTAREA") {
+        return elem.value
+    } else if (elem.tagName === "SELECT") {
+        return elem.value
+    }
+}
+
+function isChecked(elem) {
+    return elem.type === "checkbox" || elem.type === "radio"
+}
+
+function containsRadio(value) {
+    if (value.tagName || value.nodeType) {
+        return false
+    }
+
+    var elems = toList(value)
+
+    return elems.some(function (elem) {
+        return elem.tagName === "INPUT" && elem.type === "radio"
+    })
+}
+
+function toList(value) {
+    if (Array.isArray(value)) {
+        return value
+    }
+
+    return Object.keys(value).map(prop, value)
+}
+
+function prop(x) {
+    return this[x]
+}
+
+function filterNull(val) {
+    return val !== null
+}
+
+},{}],87:[function(require,module,exports){
+module.exports = hasKeys
+
+function hasKeys(source) {
+    return source !== null &&
+        (typeof source === "object" ||
+        typeof source === "function")
+}
+
+},{}],88:[function(require,module,exports){
+var hasKeys = require("./has-keys")
+
+module.exports = extend
+
+function extend() {
+    var target = {}
+
+    for (var i = 0; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        if (!hasKeys(source)) {
+            continue
+        }
+
+        for (var key in source) {
+            if (source.hasOwnProperty(key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+},{"./has-keys":87}],89:[function(require,module,exports){
+var extend = require('xtend')
+var getFormData = require('form-data-set/element')
+
+var BaseEvent = require('./base-event.js');
+
+var ENTER = 13
+
+module.exports = BaseEvent(submitLambda);
+
+function submitLambda(ev, broadcast) {
+    var target = ev.target
+
+    var isValid =
+        (ev.type === 'click' && target.tagName === 'BUTTON') ||
+        (ev.type === 'click' && target.type === 'submit') ||
+        (
+            (target.type === 'text') &&
+            (ev.keyCode === ENTER && ev.type === 'keydown')
+        )
+
+    if (!isValid) {
+        if (ev.startPropagation) {
+            ev.startPropagation()
+        }
+        return
+    }
+
+    var value = getFormData(ev.currentTarget)
+    var data = extend(value, this.data)
+
+    if (ev.preventDefault) {
+        ev.preventDefault();
+    }
+
+    broadcast(data);
+}
+
+},{"./base-event.js":79,"form-data-set/element":85,"xtend":88}],90:[function(require,module,exports){
+var extend = require('xtend')
+var getFormData = require('form-data-set/element')
+
+var BaseEvent = require('./base-event.js');
+
+module.exports = BaseEvent(valueLambda);
+
+function valueLambda(ev, broadcast) {
+    var value = getFormData(ev.currentTarget)
+    var data = extend(value, this.data)
+
+    broadcast(data);
+}
+
+},{"./base-event.js":79,"form-data-set/element":85,"xtend":88}],91:[function(require,module,exports){
+function Thunk(fn, args, key, eqArgs) {
+    this.fn = fn;
+    this.args = args;
+    this.key = key;
+    this.eqArgs = eqArgs;
+}
+
+Thunk.prototype.type = 'Thunk';
+Thunk.prototype.render = render;
+module.exports = Thunk;
+
+function shouldUpdate(current, previous) {
+    if (!current || !previous || current.fn !== previous.fn) {
+        return true;
+    }
+
+    var cargs = current.args;
+    var pargs = previous.args;
+
+    return !current.eqArgs(cargs, pargs);
+}
+
+function render(previous) {
+    if (shouldUpdate(this, previous)) {
+        return this.fn.apply(null, this.args);
+    } else {
+        return previous.vnode;
+    }
+}
+
+},{}],92:[function(require,module,exports){
+var Partial = require('./partial');
+
+module.exports = Partial();
+
+},{"./partial":93}],93:[function(require,module,exports){
+var shallowEq = require('./shallow-eq');
+var Thunk = require('./immutable-thunk');
+
+module.exports = createPartial;
+
+function createPartial(eq) {
+    return function partial(fn) {
+        var args = copyOver(arguments, 1);
+        var firstArg = args[0];
+        var key;
+
+        var eqArgs = eq || shallowEq;
+
+        if (typeof firstArg === 'object' && firstArg !== null) {
+            if ('key' in firstArg) {
+                key = firstArg.key;
+            } else if ('id' in firstArg) {
+                key = firstArg.id;
+            }
+        }
+
+        return new Thunk(fn, args, key, eqArgs);
+    };
+}
+
+function copyOver(list, offset) {
+    var newList = [];
+    for (var i = list.length - 1; i >= offset; i--) {
+        newList[i - offset] = list[i];
+    }
+    return newList;
+}
+
+},{"./immutable-thunk":91,"./shallow-eq":94}],94:[function(require,module,exports){
+module.exports = shallowEq;
+
+function shallowEq(currentArgs, previousArgs) {
+    if (currentArgs.length === 0 && previousArgs.length === 0) {
+        return true;
+    }
+
+    if (currentArgs.length !== previousArgs.length) {
+        return false;
+    }
+
+    var len = currentArgs.length;
+
+    for (var i = 0; i < len; i++) {
+        if (currentArgs[i] !== previousArgs[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+},{}],95:[function(require,module,exports){
+module.exports=require(40)
+},{"is-object":99,"vtree/is-vhook":130}],96:[function(require,module,exports){
+module.exports=require(41)
+},{"./apply-properties":95,"global/document":98,"vtree/handle-thunk":128,"vtree/is-vnode":131,"vtree/is-vtext":132,"vtree/is-widget":133}],97:[function(require,module,exports){
+module.exports=require(42)
+},{}],98:[function(require,module,exports){
+module.exports=require(33)
+},{"min-document":11}],99:[function(require,module,exports){
+module.exports=require(44)
+},{}],100:[function(require,module,exports){
+module.exports=require(45)
+},{}],101:[function(require,module,exports){
+module.exports=require(46)
+},{"./apply-properties":95,"./create-element":96,"./update-widget":103,"vtree/is-widget":133,"vtree/vpatch":137}],102:[function(require,module,exports){
+module.exports=require(47)
+},{"./dom-index":97,"./patch-op":101,"global/document":98,"x-is-array":100}],103:[function(require,module,exports){
+module.exports=require(48)
+},{"vtree/is-widget":133}],104:[function(require,module,exports){
 var DataSet = require("data-set")
 
 module.exports = DataSetHook;
@@ -4742,7 +5779,34 @@ DataSetHook.prototype.hook = function (node, propertyName) {
     ds[propName] = this.value;
 };
 
-},{"data-set":84}],81:[function(require,module,exports){
+},{"data-set":109}],105:[function(require,module,exports){
+var DataSet = require("data-set")
+
+module.exports = DataSetHook;
+
+function DataSetHook(value) {
+    if (!(this instanceof DataSetHook)) {
+        return new DataSetHook(value);
+    }
+
+    this.value = value;
+}
+
+DataSetHook.prototype.hook = function (node, propertyName) {
+    var ds = DataSet(node)
+    var propName = propertyName.substr(3)
+
+    ds[propName] = this.value;
+};
+
+DataSetHook.prototype.unhook = function(node, propertyName) {
+    var ds = DataSet(node);
+    var propName = propertyName.substr(3);
+
+    ds[propName] = undefined;
+}
+
+},{"data-set":109}],106:[function(require,module,exports){
 module.exports = SoftSetHook;
 
 function SoftSetHook(value) {
@@ -4759,17 +5823,34 @@ SoftSetHook.prototype.hook = function (node, propertyName) {
     }
 };
 
-},{}],82:[function(require,module,exports){
-var VNode = require("virtual-dom/vtree/vnode.js")
-var VText = require("virtual-dom/vtree/vtext.js")
-var isVNode = require("virtual-dom/vtree/is-vnode")
-var isVText = require("virtual-dom/vtree/is-vtext")
-var isWidget = require("virtual-dom/vtree/is-widget")
-var isHook = require("virtual-dom/vtree/is-vhook")
+},{}],107:[function(require,module,exports){
+var TypedError = require("error/typed")
+
+var VNode = require("vtree/vnode.js")
+var VText = require("vtree/vtext.js")
+var isVNode = require("vtree/is-vnode")
+var isVText = require("vtree/is-vtext")
+var isWidget = require("vtree/is-widget")
+var isHook = require("vtree/is-vhook")
+var isVThunk = require("vtree/is-thunk")
 
 var parseTag = require("./parse-tag.js")
 var softSetHook = require("./hooks/soft-set-hook.js")
 var dataSetHook = require("./hooks/data-set-hook.js")
+var evHook = require("./hooks/ev-hook.js")
+
+var UnexpectedVirtualElement = TypedError({
+    type: "virtual-hyperscript.unexpected.virtual-element",
+    message: "Unexpected virtual child passed to h().\n" +
+        "Expected a VNode / Vthunk / VWidget / string but:\n" +
+        "got a {foreignObjectStr}.\n" +
+        "The parent vnode is {parentVnodeStr}.\n" +
+        "Suggested fix: change your `h(..., [ ... ])` callsite.",
+    foreignObjectStr: null,
+    parentVnodeStr: null,
+    foreignObject: null,
+    parentVnode: null
+})
 
 module.exports = h
 
@@ -4784,16 +5865,6 @@ function h(tagName, properties, children) {
 
     props = props || properties || {}
     tag = parseTag(tagName, props)
-
-    if (children) {
-        if (Array.isArray(children)) {
-            for (var i = 0; i < children.length; i++) {
-                addChild(children[i], childNodes)
-            }
-        } else {
-            addChild(children, childNodes)
-        }
-    }
 
     // support keys
     if ("key" in props) {
@@ -4816,48 +5887,158 @@ function h(tagName, properties, children) {
         props.value = softSetHook(props.value)
     }
 
-    // add data-set support
     var keys = Object.keys(props)
+    var propName, value
     for (var j = 0; j < keys.length; j++) {
-        var propName = keys[j]
-        var value = props[propName]
-        if (!isHook(value) && propName.substr(0, 5) === "data-") {
+        propName = keys[j]
+        value = props[propName]
+        if (isHook(value)) {
+            continue
+        }
+
+        // add data-foo support
+        if (propName.substr(0, 5) === "data-") {
             props[propName] = dataSetHook(value)
+        }
+
+        // add ev-foo support
+        if (propName.substr(0, 3) === "ev-") {
+            props[propName] = evHook(value)
         }
     }
 
-    return new VNode(tag, props, childNodes, key, namespace)
+    if (children !== undefined && children !== null) {
+        addChild(children, childNodes, tag, props)
+    }
+
+
+    var node = new VNode(tag, props, childNodes, key, namespace)
+
+    return node
 }
 
-function addChild(c, childNodes) {
+function addChild(c, childNodes, tag, props) {
     if (typeof c === "string") {
         childNodes.push(new VText(c))
     } else if (isChild(c)) {
         childNodes.push(c)
+    } else if (Array.isArray(c)) {
+        for (var i = 0; i < c.length; i++) {
+            addChild(c[i], childNodes, tag, props)
+        }
+    } else if (c === null || c === undefined) {
+        return
+    } else {
+        throw UnexpectedVirtualElement({
+            foreignObjectStr: JSON.stringify(c),
+            foreignObject: c,
+            parentVnodeStr: JSON.stringify({
+                tagName: tag,
+                properties: props
+            }),
+            parentVnode: {
+                tagName: tag,
+                properties: props
+            }
+        })
     }
 }
 
 function isChild(x) {
-    return isVNode(x) || isVText(x) || isWidget(x)
+    return isVNode(x) || isVText(x) || isWidget(x) || isVThunk(x)
 }
 
 function isChildren(x) {
-    return typeof x === "string" || Array.isArray(x)
+    return typeof x === "string" || Array.isArray(x) || isChild(x)
 }
 
-},{"./hooks/data-set-hook.js":80,"./hooks/soft-set-hook.js":81,"./parse-tag.js":89,"virtual-dom/vtree/is-vhook":71,"virtual-dom/vtree/is-vnode":72,"virtual-dom/vtree/is-vtext":73,"virtual-dom/vtree/is-widget":74,"virtual-dom/vtree/vnode.js":76,"virtual-dom/vtree/vtext.js":78}],83:[function(require,module,exports){
-module.exports=require(20)
-},{}],84:[function(require,module,exports){
+},{"./hooks/data-set-hook.js":104,"./hooks/ev-hook.js":105,"./hooks/soft-set-hook.js":106,"./parse-tag.js":125,"error/typed":116,"vtree/is-thunk":117,"vtree/is-vhook":118,"vtree/is-vnode":119,"vtree/is-vtext":120,"vtree/is-widget":121,"vtree/vnode.js":123,"vtree/vtext.js":124}],108:[function(require,module,exports){
 module.exports=require(21)
-},{"./create-hash.js":83,"individual":85,"weakmap-shim/create-store":87}],85:[function(require,module,exports){
-module.exports=require(24)
-},{"global":86}],86:[function(require,module,exports){
-module.exports=require(25)
-},{}],87:[function(require,module,exports){
+},{}],109:[function(require,module,exports){
 module.exports=require(22)
-},{"./hidden-store.js":88}],88:[function(require,module,exports){
+},{"./create-hash.js":108,"individual":110,"weakmap-shim/create-store":111}],110:[function(require,module,exports){
 module.exports=require(23)
-},{}],89:[function(require,module,exports){
+},{}],111:[function(require,module,exports){
+module.exports=require(25)
+},{"./hidden-store.js":112}],112:[function(require,module,exports){
+module.exports=require(26)
+},{}],113:[function(require,module,exports){
+module.exports=require(36)
+},{}],114:[function(require,module,exports){
+module.exports=require(37)
+},{}],115:[function(require,module,exports){
+module.exports=require(38)
+},{}],116:[function(require,module,exports){
+module.exports=require(39)
+},{"camelize":113,"string-template":114,"xtend/mutable":115}],117:[function(require,module,exports){
+module.exports=require(51)
+},{}],118:[function(require,module,exports){
+module.exports=require(52)
+},{}],119:[function(require,module,exports){
+module.exports=require(53)
+},{"./version":122}],120:[function(require,module,exports){
+module.exports=require(54)
+},{"./version":122}],121:[function(require,module,exports){
+module.exports=require(55)
+},{}],122:[function(require,module,exports){
+module.exports=require(58)
+},{}],123:[function(require,module,exports){
+var version = require("./version")
+var isVNode = require("./is-vnode")
+var isWidget = require("./is-widget")
+var isVHook = require("./is-vhook")
+
+module.exports = VirtualNode
+
+var noProperties = {}
+var noChildren = []
+
+function VirtualNode(tagName, properties, children, key, namespace) {
+    this.tagName = tagName
+    this.properties = properties || noProperties
+    this.children = children || noChildren
+    this.key = key != null ? String(key) : undefined
+    this.namespace = (typeof namespace === "string") ? namespace : null
+
+    var count = (children && children.length) || 0
+    var descendants = 0
+    var hasWidgets = false
+
+    for (var i = 0; i < count; i++) {
+        var child = children[i]
+        if (isVNode(child)) {
+            descendants += child.count || 0
+
+            if (!hasWidgets && child.hasWidgets) {
+                hasWidgets = true
+            }
+        } else if (!hasWidgets && isWidget(child)) {
+            if (typeof child.destroy === "function") {
+                hasWidgets = true
+            }
+        }
+    }
+
+    this.count = count + descendants
+    this.hasWidgets = hasWidgets
+}
+
+VirtualNode.prototype.version = version
+VirtualNode.prototype.type = "VirtualNode"
+
+},{"./is-vhook":118,"./is-vnode":119,"./is-widget":121,"./version":122}],124:[function(require,module,exports){
+var version = require("./version")
+
+module.exports = VirtualText
+
+function VirtualText(text) {
+    this.text = String(text)
+}
+
+VirtualText.prototype.version = version
+VirtualText.prototype.type = "VirtualText"
+
+},{"./version":122}],125:[function(require,module,exports){
 var classIdSplit = /([\.#]?[a-zA-Z0-9_:-]+)/
 var notClassId = /^\.|#/
 
@@ -4908,8 +6089,7 @@ function parseTag(tag, props) {
     return tagName ? tagName.toLowerCase() : "div"
 }
 
-},{}],90:[function(require,module,exports){
-var attributeHook = require("./hooks/attribute-hook.js")
+},{}],126:[function(require,module,exports){
 var h = require("./index.js")
 
 var BLACKLISTED_KEYS = {
@@ -4932,6 +6112,8 @@ function svg(tagName, properties, children) {
     // set namespace for svg
     properties.namespace = SVG_NAMESPACE
 
+    var attributes = properties.attributes || (properties.attributes = {})
+
     // for each key, if attribute & string, bool or number then
     // convert it into a setAttribute hook
     for (var key in properties) {
@@ -4951,7 +6133,7 @@ function svg(tagName, properties, children) {
             continue
         }
 
-        properties[key] = attributeHook(value)
+        attributes[key] = value
     }
 
     return h(tagName, properties, children)
@@ -4961,7 +6143,33 @@ function isChildren(x) {
     return typeof x === "string" || Array.isArray(x)
 }
 
-},{"./hooks/attribute-hook.js":79,"./index.js":82}],91:[function(require,module,exports){
+},{"./index.js":107}],127:[function(require,module,exports){
+module.exports=require(49)
+},{"./handle-thunk":128,"./is-thunk":129,"./is-vhook":130,"./is-vnode":131,"./is-vtext":132,"./is-widget":133,"./vpatch":137,"is-object":134,"x-is-array":135}],128:[function(require,module,exports){
+module.exports=require(50)
+},{"./is-thunk":129,"./is-vnode":131,"./is-vtext":132,"./is-widget":133}],129:[function(require,module,exports){
+module.exports=require(51)
+},{}],130:[function(require,module,exports){
+module.exports=require(52)
+},{}],131:[function(require,module,exports){
+module.exports=require(53)
+},{"./version":136}],132:[function(require,module,exports){
+module.exports=require(54)
+},{"./version":136}],133:[function(require,module,exports){
+module.exports=require(55)
+},{}],134:[function(require,module,exports){
+module.exports=require(44)
+},{}],135:[function(require,module,exports){
+module.exports=require(45)
+},{}],136:[function(require,module,exports){
+module.exports=require(58)
+},{}],137:[function(require,module,exports){
+module.exports=require(59)
+},{"./version":136}],138:[function(require,module,exports){
+module.exports=require(25)
+},{"./hidden-store.js":139}],139:[function(require,module,exports){
+module.exports=require(26)
+},{}],140:[function(require,module,exports){
 module.exports = extend
 
 function extend() {
@@ -4980,30 +6188,74 @@ function extend() {
     return target
 }
 
-},{}],92:[function(require,module,exports){
-module.exports = TimeTravel
+},{}],141:[function(require,module,exports){
+'use strict';
+
+module.exports = TimeTravel;
 
 function TimeTravel(state) {
-    var states = [state()]
+    var history = [state()];
 
-    state(function (newState) {
-        if (newState !== states[0]) {
-            states.unshift(newState)
+    // Tracks the current position in history.
+    var cursor = 0;
+
+    var isRedoOrUndo = false;
+
+    state(function recordState(newState) {
+
+        // This function gets called whenever there is a state change.
+        // State changes happen due to events being handled, or due to
+        // undo/redo.
+
+        // If we are replaying items in the history,
+        // we don't want to re-add them to the end of the history.
+        // Just quit.
+        if (isRedoOrUndo) {
+            return;
         }
-    })
 
-    return undo
+        // If we've made it this far, `newState` is due to a new action,
+        // not due to undo/redo.
+
+        // If we've called `undo` a bunch of times,
+        // the cursor won't be at the end.
+        // Any states past the cursor should be cut off.
+        history.splice(cursor + 1);
+
+        // Add the new item to the history
+        history.push(newState);
+
+        cursor = history.length - 1;
+    });
+
+    return { undo: undo, redo: redo };
 
     function undo() {
-        if (states.length <= 1) {
-            return
+        if (cursor < 1) {
+            // Don't move before the beginning of time
+            return undefined;
         }
 
-        states.shift()
-        state.set(states[0])
-        return states[0]
+        cursor--;
+        isRedoOrUndo = true;
+        state.set(history[cursor]);
+        isRedoOrUndo = false;
+        return history[cursor];
+    }
+
+    function redo() {
+        if (cursor + 1 >= history.length) {
+            // Don't move past the end of time
+            return undefined;
+        }
+
+        cursor++;
+        isRedoOrUndo = true;
+        state.set(history[cursor]);
+        isRedoOrUndo = false;
+        return history[cursor];
     }
 }
 
-},{}]},{},[1])</script>
+},{}]},{},[6])</script>
 </html>

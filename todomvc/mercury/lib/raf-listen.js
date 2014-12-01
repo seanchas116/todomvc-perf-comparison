@@ -1,4 +1,6 @@
-var raf = require('raf/polyfill');
+'use strict';
+
+var raf = require('raf');
 
 module.exports = rafListen;
 
