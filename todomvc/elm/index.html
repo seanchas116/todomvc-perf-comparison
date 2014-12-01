@@ -4,8 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <title>Elm • TodoMVC</title>
-  <script type="text/javascript" src="runtime.js"></script>
-  <script type="text/javascript" src="todo.js"></script>
+  <script type="text/javascript" src="http://elm-lang.org/elm-runtime.js"></script>
+  <script type="text/javascript" src="build/Todo.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -13,7 +13,7 @@
 </body>
 
 <script type="text/javascript">
-var storedState = localStorage.getItem('todos-elm');
+var storedState = localStorage.getItem('elm-todo-state');
 var startingState = storedState ? JSON.parse(storedState) : null;
 
 var todomvc = Elm.fullscreen(Elm.Todo, { getStorage: startingState });
@@ -27,7 +27,7 @@ todomvc.ports.focus.subscribe(function(selector) {
 });
 
 todomvc.ports.setStorage.subscribe(function(state) {
-    localStorage.setItem('todos-elm', JSON.stringify(state));
+    localStorage.setItem('elm-todo-state', JSON.stringify(state));
 });
 
 </script>

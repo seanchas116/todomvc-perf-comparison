@@ -39,7 +39,7 @@ Suites.push({
 Suites.push({
     name: 'Ember',
     url: 'todomvc/emberjs/index.html',
-    version: '1.4.0 + Handlebars 1.3.0',
+    version: '1.8.1 + Handlebars 1.3.0',
     prepare: function (runner, contentWindow, contentDocument) {
         contentWindow.Todos.Store = contentWindow.DS.Store.extend({
             revision: 12,
@@ -86,7 +86,7 @@ Suites.push({
 Suites.push({
     name: 'Angular',
     url: 'todomvc/angularjs-perf/index.html',
-    version: '1.2.14',
+    version: '1.2.27',
     prepare: function (runner, contentWindow, contentDocument) {
         return runner.waitForElement('#new-todo').then(function (element) {
             element.focus();
@@ -121,7 +121,7 @@ Suites.push({
 Suites.push({
     name: 'React',
     url: 'todomvc/react/index.html',
-    version: '0.10.0',
+    version: '0.12.1',
     prepare: function (runner, contentWindow, contentDocument) {
         contentWindow.Utils.store = function () {}
         return runner.waitForElement('#new-todo').then(function (element) {
@@ -189,7 +189,7 @@ Suites.push({
 Suites.push({
     name: 'Mercury',
     url: 'todomvc/mercury/index.html',
-    version: '3.1.7 + virtual-dom 0.8',
+    version: '3.1.7 + virtual-dom 0.0.21',
     prepare: function (runner, contentWindow, contentDocument) {
         return runner.waitForElement('#new-todo').then(function (element) {
             element.focus();
@@ -226,7 +226,7 @@ Suites.push({
 Suites.push({
     name: 'Elm',
     url: 'todomvc/elm/index.html',
-    version: '0.12.3 + virtual-dom 0.8',
+    version: '0.13 + virtual-dom 1.0.0',
     prepare: function (runner, contentWindow, contentDocument) {
         return runner.waitForElement('#new-todo').then(function (element) {
             element.focus();
