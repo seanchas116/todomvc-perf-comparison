@@ -13,4 +13,4 @@ a Macbook Air:
 
 [![Sample results for Chrome 35 + OSX 10.9.4 on a Macbook Air](sampleResults.png)][runner]
 
-[runner]: http://evancz.github.io/todomvc-perf-comparison/
+[runner]: http://dsuket.github.io/todomvc-perf-comparison/
