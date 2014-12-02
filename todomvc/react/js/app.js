@@ -38,7 +38,7 @@
 		},
 
 		handleNewTodoKeyDown: function (event) {
-			if (event.which !== ENTER_KEY) {
+			if ((event.which||event.nativeEvent.which) !== ENTER_KEY) {
 				return;
 			}
 
@@ -55,7 +55,8 @@
 				this.refs.newField.getDOMNode().value = '';
 			}
 
-			return false;
+			event.stopPropagation();
+			event.preventDefault();
 		},
 
 		toggleAll: function (event) {
@@ -199,8 +200,8 @@
 		}
 	});
 
-	React.renderComponent(TodoApp(null ), document.getElementById('todoapp'));
-	React.renderComponent(
+	React.render(TodoApp(null ), document.getElementById('todoapp'));
+	React.render(
 		React.DOM.div(null, 
 			React.DOM.p(null, "Double-click to edit a todo"),
 			React.DOM.p(null, "Created by",' ',
